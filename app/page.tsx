@@ -1229,7 +1229,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
     window.setTimeout(() => setToastMessage(""), 2200);
   }
 
-  async function saveQrImage() {
+  function saveQrImage() {
     const imageUrl = qrUrl ? getQrImageUrl(qrUrl) : "";
 
     if (!imageUrl) {
@@ -1237,32 +1237,44 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       return;
     }
 
-    try {
-      const response = await fetch(imageUrl, { mode: "cors" });
+    const driveFileId = getDriveFileId(qrUrl);
 
-      if (!response.ok) {
-        throw new Error("ไม่สามารถดาวน์โหลด QR Code ได้");
-      }
-
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-
-      link.href = blobUrl;
-      link.download = "oombam-blossom-fc-qr.png";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-
-      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-      showToast("บันทึก QR Code แล้ว");
-    } catch (error) {
-      console.error("บันทึก QR ไม่สำเร็จ:", error);
-
-      // fallback หากเบราว์เซอร์ไม่อนุญาตให้ดึงภาพข้ามโดเมน
-      window.open(imageUrl, "_blank", "noopener,noreferrer");
-      showToast("เปิด QR Code แล้ว กดบันทึกจากหน้ารูปได้เลย");
+    if (driveFileId) {
+      // ใช้ route ของเว็บเราเองเพื่อให้ LINE/Android WebView
+      // ได้รับไฟล์พร้อม Content-Disposition: attachment โดยตรง
+      const downloadUrl = `/api/qr-download?fileId=${encodeURIComponent(
+        driveFileId,
+      )}`;
+      window.location.assign(downloadUrl);
+      return;
     }
+
+    // กรณี QR ไม่ได้มาจาก Google Drive ให้ใช้วิธีดาวน์โหลดปกติ
+    void (async () => {
+      try {
+        const response = await fetch(imageUrl, { mode: "cors" });
+
+        if (!response.ok) {
+          throw new Error("ไม่สามารถดาวน์โหลด QR Code ได้");
+        }
+
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+
+        link.href = blobUrl;
+        link.download = "oombam-blossom-fc-qr.png";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+
+        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+        showToast("บันทึก QR Code แล้ว");
+      } catch (error) {
+        console.error("บันทึก QR ไม่สำเร็จ:", error);
+        window.location.assign(imageUrl);
+      }
+    })();
   }
 
   async function copyBankAccount() {
