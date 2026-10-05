@@ -1,0 +1,1877 @@
+/* =========================================================
+   OomBam Blossom FC
+   Next.js + Supabase
+   Supabase only
+   ========================================================= */
+
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "../lib/supabase/client";
+
+type EventItem = {
+  id: string;
+  name: string;
+  desc: string;
+  imageFolderUrl: string;
+  scheduleUrl: string;
+  createdAt: string;
+};
+
+type TransactionItem = {
+  id: string;
+  eventId: string;
+  date: string;
+  type: "income" | "expense";
+  desc: string;
+  amount: number;
+  note: string;
+  createdAt: string;
+};
+
+type EventRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  image_folder_url: string | null;
+  schedule_url: string | null;
+  created_at: string;
+};
+
+type TransactionRow = {
+  id: string;
+  event_id: string;
+  date: string;
+  type: "income" | "expense";
+  description: string;
+  amount: number | string;
+  note: string | null;
+  created_at: string;
+};
+
+type SettingRow = {
+  key: string;
+  value: string | null;
+  updated_at: string;
+};
+
+type DriveImage = {
+  id: string;
+  name: string;
+  mimeType: string;
+  imageUrl: string;
+};
+
+const DEFAULT_SCHEDULE_URL =
+  "https://lh3.googleusercontent.com/d/1hHGB04z7b-y1IuuBrl3X2CkLUpM1BAAX=s0";
+
+function formatMoney(value: number) {
+  return value.toLocaleString("th-TH", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatDate(date: string) {
+  if (!date) return "—";
+
+  const value = new Date(`${date}T00:00:00`);
+
+  if (Number.isNaN(value.getTime())) return date;
+
+  return value.toLocaleDateString("th-TH", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
+function getDriveFileId(url: string) {
+  const value = url.trim();
+  if (!value) return null;
+
+  const patterns = [
+    /drive\.google\.com\/file\/d\/([^/]+)/i,
+    /[?&]id=([^&]+)/i,
+    /lh3\.googleusercontent\.com\/d\/([^=/?]+)/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = value.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+
+  return null;
+}
+
+function getDriveImageUrl(url: string) {
+  const fileId = getDriveFileId(url);
+  if (!fileId) return url.trim();
+
+  return `https://lh3.googleusercontent.com/d/${fileId}=w1600`;
+}
+
+function getDriveThumbUrl(url: string) {
+  const fileId = getDriveFileId(url);
+  if (!fileId) return url.trim();
+
+  return `https://lh3.googleusercontent.com/d/${fileId}=w320`;
+}
+
+function getScheduleImageUrl(url: string) {
+  if (!url.trim()) return DEFAULT_SCHEDULE_URL;
+
+  const driveId =
+    url.match(/\/d\/([\w-]+)/)?.[1] ?? url.match(/[?&]id=([\w-]+)/)?.[1];
+
+  return driveId
+    ? `https://lh3.googleusercontent.com/d/${driveId}=s0`
+    : url;
+}
+
+function getQrImageUrl(url: string) {
+  if (!url.trim()) return "";
+
+  const driveId =
+    url.match(/\/d\/([\w-]+)/)?.[1] ??
+    url.match(/[?&]id=([\w-]+)/)?.[1];
+
+  // ใช้วิธีเดียวกับภาพตารางงานที่แสดงได้อยู่แล้ว
+  return driveId
+    ? `https://lh3.googleusercontent.com/d/${driveId}=s0`
+    : url;
+}
+
+function mapEvent(row: EventRow): EventItem {
+  return {
+    id: row.id,
+    name: row.name,
+    desc: row.description ?? "",
+    imageFolderUrl: row.image_folder_url ?? "",
+    scheduleUrl: row.schedule_url ?? "",
+    createdAt: row.created_at,
+  };
+}
+
+function mapTransaction(row: TransactionRow): TransactionItem {
+  return {
+    id: row.id,
+    eventId: row.event_id,
+    date: row.date,
+    type: row.type,
+    desc: row.description,
+    amount: Number(row.amount),
+    note: row.note ?? "",
+    createdAt: row.created_at,
+  };
+}
+
+export default function Home({ initialEventId }: { initialEventId?: string } = {}) {
+  const router = useRouter();
+  const [supabase] = useState(() => createClient());
+
+  const [events, setEvents] = useState<EventItem[]>([]);
+  const [transactions, setTransactions] = useState<TransactionItem[]>([]);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(initialEventId ?? null);
+
+  const [isReady, setIsReady] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+
+  const [isEventModalOpen, setIsEventModalOpen] = useState(false);
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [eventName, setEventName] = useState("");
+  const [eventDesc, setEventDesc] = useState("");
+  const [imageFolderUrl, setImageFolderUrl] = useState("");
+  const [scheduleUrl, setScheduleUrl] = useState("");
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
+
+  const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
+  const [editingTransactionId, setEditingTransactionId] = useState<string | null>(
+    null,
+  );
+  const [transactionDate, setTransactionDate] = useState("");
+  const [transactionType, setTransactionType] =
+    useState<"income" | "expense">("income");
+  const [transactionDesc, setTransactionDesc] = useState("");
+  const [transactionAmount, setTransactionAmount] = useState("");
+  const [transactionNote, setTransactionNote] = useState("");
+  const [transactionFilter, setTransactionFilter] =
+    useState<"" | "income" | "expense">("");
+
+  const [qrUrl, setQrUrl] = useState("");
+  const [qrInput, setQrInput] = useState("");
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+
+  const [selectedEventImages, setSelectedEventImages] = useState<DriveImage[]>([]);
+  const [isLoadingEventImages, setIsLoadingEventImages] = useState(false);
+  const [eventImagesError, setEventImagesError] = useState("");
+
+  const selectedEvent =
+    events.find((event) => event.id === selectedEventId) ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEventImages() {
+      const folderUrl = selectedEvent?.imageFolderUrl?.trim() ?? "";
+
+      setSelectedImageIndex(0);
+      setSelectedEventImages([]);
+      setEventImagesError("");
+
+      if (!folderUrl) {
+        setIsLoadingEventImages(false);
+        return;
+      }
+
+      setIsLoadingEventImages(true);
+
+      try {
+        const response = await fetch(
+          `/api/drive-images?folder=${encodeURIComponent(folderUrl)}`,
+          { cache: "no-store" },
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data?.error || "โหลดรูปจาก Google Drive ไม่สำเร็จ");
+        }
+
+        if (!cancelled) {
+          setSelectedEventImages(Array.isArray(data?.images) ? data.images : []);
+        }
+      } catch (error) {
+        console.error("โหลดรูป Event ไม่สำเร็จ:", error);
+        if (!cancelled) {
+          setEventImagesError(
+            error instanceof Error
+              ? error.message
+              : "โหลดรูปจาก Google Drive ไม่สำเร็จ",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingEventImages(false);
+        }
+      }
+    }
+
+    loadEventImages();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedEvent?.imageFolderUrl]);
+
+  const globalStats = useMemo(() => {
+    const income = transactions
+      .filter((transaction) => transaction.type === "income")
+      .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+
+    const expense = transactions
+      .filter((transaction) => transaction.type === "expense")
+      .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+
+    return {
+      income,
+      expense,
+      balance: income - expense,
+    };
+  }, [transactions]);
+
+  const selectedEventStats = useMemo(() => {
+    if (!selectedEventId) {
+      return { income: 0, expense: 0, balance: 0, count: 0 };
+    }
+
+    const eventTransactions = transactions.filter(
+      (transaction) => transaction.eventId === selectedEventId,
+    );
+
+    const income = eventTransactions
+      .filter((transaction) => transaction.type === "income")
+      .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+
+    const expense = eventTransactions
+      .filter((transaction) => transaction.type === "expense")
+      .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+
+    return {
+      income,
+      expense,
+      balance: income - expense,
+      count: eventTransactions.length,
+    };
+  }, [selectedEventId, transactions]);
+
+  const filteredTransactions = useMemo(() => {
+    if (!selectedEventId) return [];
+
+    return transactions
+      .filter((transaction) => transaction.eventId === selectedEventId)
+      .filter((transaction) =>
+        transactionFilter ? transaction.type === transactionFilter : true,
+      )
+      .sort((a, b) => {
+        const dateCompare = b.date.localeCompare(a.date);
+        if (dateCompare !== 0) return dateCompare;
+        return b.createdAt.localeCompare(a.createdAt);
+      });
+  }, [selectedEventId, transactionFilter, transactions]);
+
+  async function loadData() {
+    const [
+      { data: sessionData },
+      { data: eventRows, error: eventsError },
+      { data: transactionRows, error: transactionsError },
+      { data: settingRow, error: settingsError },
+    ] = await Promise.all([
+      supabase.auth.getSession(),
+      supabase
+        .from("events")
+        .select(
+          "id, name, description, image_folder_url, schedule_url, created_at",
+        )
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("transactions")
+        .select(
+          "id, event_id, date, type, description, amount, note, created_at",
+        )
+        .order("date", { ascending: false }),
+      supabase
+        .from("settings")
+        .select("key, value, updated_at")
+        .eq("key", "qr_url")
+        .maybeSingle(),
+    ]);
+
+    if (eventsError) {
+      console.error("โหลด Event ไม่สำเร็จ:", eventsError);
+      setEvents([]);
+    } else {
+      setEvents((eventRows ?? []).map((row) => mapEvent(row as EventRow)));
+    }
+
+    if (transactionsError) {
+      console.error("โหลด Transaction ไม่สำเร็จ:", transactionsError);
+      setTransactions([]);
+    } else {
+      setTransactions(
+        (transactionRows ?? []).map((row) =>
+          mapTransaction(row as TransactionRow),
+        ),
+      );
+    }
+
+    if (settingsError) {
+      console.error("โหลด Settings ไม่สำเร็จ:", settingsError);
+      setQrUrl("");
+    } else {
+      setQrUrl((settingRow as SettingRow | null)?.value ?? "");
+    }
+
+    setIsAdmin(!!sessionData.session);
+    setIsReady(true);
+  }
+
+  useEffect(() => {
+    void loadData();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsAdmin(!!session);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
+
+  function openLoginModal() {
+    setLoginEmail("");
+    setLoginPassword("");
+    setLoginError("");
+    setIsLoginModalOpen(true);
+  }
+
+  function closeLoginModal() {
+    setIsLoginModalOpen(false);
+    setLoginEmail("");
+    setLoginPassword("");
+    setLoginError("");
+  }
+
+  async function doLogin() {
+    const email = loginEmail.trim();
+
+    if (!email) {
+      setLoginError("กรุณาใส่อีเมล");
+      return;
+    }
+
+    if (!loginPassword) {
+      setLoginError("กรุณาใส่รหัสผ่าน");
+      return;
+    }
+
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password: loginPassword,
+    });
+
+    if (error) {
+      console.error("Login failed:", error);
+      setLoginError("อีเมลหรือรหัสผ่านไม่ถูกต้อง");
+      return;
+    }
+
+    setIsAdmin(true);
+    closeLoginModal();
+  }
+
+  async function doLogout() {
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      console.error("Logout failed:", error);
+      return;
+    }
+
+    setIsAdmin(false);
+  }
+
+  function resetEventForm() {
+    setEditingEventId(null);
+    setEventName("");
+    setEventDesc("");
+    setImageFolderUrl("");
+    setScheduleUrl("");
+  }
+
+  function openCreateEventModal() {
+    if (!isAdmin) {
+      openLoginModal();
+      return;
+    }
+
+    resetEventForm();
+    setIsEventModalOpen(true);
+  }
+
+  function openEditEventModal(event: EventItem) {
+    if (!isAdmin) {
+      openLoginModal();
+      return;
+    }
+
+    setEditingEventId(event.id);
+    setEventName(event.name);
+    setEventDesc(event.desc);
+    setImageFolderUrl(event.imageFolderUrl);
+    setScheduleUrl(event.scheduleUrl);
+    setIsEventModalOpen(true);
+  }
+
+  function closeEventModal() {
+    setIsEventModalOpen(false);
+    resetEventForm();
+  }
+
+  async function saveEvent() {
+    if (!isAdmin) {
+      openLoginModal();
+      return;
+    }
+
+    const cleanName = eventName.trim();
+
+    if (!cleanName) {
+      alert("กรุณาใส่ชื่อ Event");
+      return;
+    }
+
+    if (editingEventId) {
+      const { data, error } = await supabase
+        .from("events")
+        .update({
+          name: cleanName,
+          description: eventDesc.trim() || null,
+          image_folder_url: imageFolderUrl.trim() || null,
+          schedule_url: scheduleUrl.trim() || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", editingEventId)
+        .select(
+          "id, name, description, image_folder_url, schedule_url, created_at",
+        )
+        .single();
+
+      if (error || !data) {
+        console.error("แก้ไข Event ไม่สำเร็จ:", error);
+        alert(`แก้ไข Event ไม่สำเร็จ\n${error?.message ?? "ไม่พบข้อมูล Event"}`);
+        return;
+      }
+
+      const updatedEvent = mapEvent(data as EventRow);
+
+      setEvents((current) =>
+        current.map((event) =>
+          event.id === editingEventId ? updatedEvent : event,
+        ),
+      );
+    } else {
+      const { data, error } = await supabase
+        .from("events")
+        .insert({
+          name: cleanName,
+          description: eventDesc.trim() || null,
+          image_folder_url: imageFolderUrl.trim() || null,
+          schedule_url: scheduleUrl.trim() || null,
+        })
+        .select(
+          "id, name, description, image_folder_url, schedule_url, created_at",
+        )
+        .single();
+
+      if (error || !data) {
+        console.error("สร้าง Event ไม่สำเร็จ:", error);
+        alert(`สร้าง Event ไม่สำเร็จ\n${error?.message ?? "ไม่พบข้อมูลที่สร้าง"}`);
+        return;
+      }
+
+      setEvents((current) => [mapEvent(data as EventRow), ...current]);
+    }
+
+    closeEventModal();
+  }
+
+  async function deleteEvent(id: string) {
+    if (!isAdmin) {
+      openLoginModal();
+      return;
+    }
+
+    const event = events.find((item) => item.id === id);
+
+    if (!event) return;
+
+    const confirmed = window.confirm(
+      `ลบ Event "${event.name}" ใช่หรือไม่?\n\nการดำเนินการนี้ไม่สามารถย้อนกลับได้`,
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await supabase.from("events").delete().eq("id", id);
+
+    if (error) {
+      console.error("ลบ Event ไม่สำเร็จ:", error);
+      alert(`ลบ Event ไม่สำเร็จ\n${error.message}`);
+      return;
+    }
+
+    setEvents((current) => current.filter((item) => item.id !== id));
+    setTransactions((current) =>
+      current.filter((transaction) => transaction.eventId !== id),
+    );
+
+    if (selectedEventId === id) {
+      setSelectedEventId(null);
+      router.push("/");
+    }
+  }
+
+  function openEventDetail(id: string) {
+    setTransactionFilter("");
+    router.push(`/events/${id}`);
+  }
+
+  function resetTransactionForm() {
+    setEditingTransactionId(null);
+    setTransactionDate(new Date().toISOString().slice(0, 10));
+    setTransactionType("income");
+    setTransactionDesc("");
+    setTransactionAmount("");
+    setTransactionNote("");
+  }
+
+  function openCreateTransactionModal() {
+    if (!isAdmin) {
+      openLoginModal();
+      return;
+    }
+
+    if (!selectedEventId) return;
+
+    resetTransactionForm();
+    setIsTransactionModalOpen(true);
+  }
+
+  function openEditTransactionModal(transaction: TransactionItem) {
+    if (!isAdmin) {
+      openLoginModal();
+      return;
+    }
+
+    setEditingTransactionId(transaction.id);
+    setTransactionDate(transaction.date);
+    setTransactionType(transaction.type);
+    setTransactionDesc(transaction.desc);
+    setTransactionAmount(String(transaction.amount));
+    setTransactionNote(transaction.note);
+    setIsTransactionModalOpen(true);
+  }
+
+  function closeTransactionModal() {
+    setIsTransactionModalOpen(false);
+    resetTransactionForm();
+  }
+
+  async function saveTransaction() {
+    if (!isAdmin) {
+      openLoginModal();
+      return;
+    }
+
+    if (!selectedEventId) {
+      alert("กรุณาเลือก Event ก่อนเพิ่มรายการ");
+      return;
+    }
+
+    const cleanDesc = transactionDesc.trim();
+    const amount = Number(transactionAmount);
+
+    if (!transactionDate) {
+      alert("กรุณาเลือกวันที่");
+      return;
+    }
+
+    if (!cleanDesc) {
+      alert("กรุณาใส่รายละเอียดรายการ");
+      return;
+    }
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      alert("กรุณาใส่จำนวนเงินที่มากกว่า 0");
+      return;
+    }
+
+    if (editingTransactionId) {
+      const { data, error } = await supabase
+        .from("transactions")
+        .update({
+          date: transactionDate,
+          type: transactionType,
+          description: cleanDesc,
+          amount,
+          note: transactionNote.trim() || null,
+        })
+        .eq("id", editingTransactionId)
+        .eq("event_id", selectedEventId)
+        .select(
+          "id, event_id, date, type, description, amount, note, created_at",
+        )
+        .single();
+
+      if (error || !data) {
+        console.error("แก้ไขรายการไม่สำเร็จ:", error);
+        alert(`แก้ไขรายการไม่สำเร็จ\n${error?.message ?? "ไม่พบรายการ"}`);
+        return;
+      }
+
+      const updatedTransaction = mapTransaction(
+        data as TransactionRow,
+      );
+
+      setTransactions((current) =>
+        current.map((transaction) =>
+          transaction.id === editingTransactionId
+            ? updatedTransaction
+            : transaction,
+        ),
+      );
+    } else {
+      const { data, error } = await supabase
+        .from("transactions")
+        .insert({
+          event_id: selectedEventId,
+          date: transactionDate,
+          type: transactionType,
+          description: cleanDesc,
+          amount,
+          note: transactionNote.trim() || null,
+        })
+        .select(
+          "id, event_id, date, type, description, amount, note, created_at",
+        )
+        .single();
+
+      if (error || !data) {
+        console.error("เพิ่มรายการไม่สำเร็จ:", error);
+        alert(`เพิ่มรายการไม่สำเร็จ\n${error?.message ?? "ไม่พบรายการที่สร้าง"}`);
+        return;
+      }
+
+      setTransactions((current) => [
+        mapTransaction(data as TransactionRow),
+        ...current,
+      ]);
+    }
+
+    closeTransactionModal();
+  }
+
+  async function deleteTransaction(id: string) {
+    if (!isAdmin) {
+      openLoginModal();
+      return;
+    }
+
+    const transaction = transactions.find((item) => item.id === id);
+
+    if (!transaction) return;
+
+    const confirmed = window.confirm(
+      `ลบรายการ "${transaction.desc}" ใช่หรือไม่?\n\nการดำเนินการนี้ไม่สามารถย้อนกลับได้`,
+    );
+
+    if (!confirmed) return;
+
+    const { error } = await supabase
+      .from("transactions")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      console.error("ลบรายการไม่สำเร็จ:", error);
+      alert(`ลบรายการไม่สำเร็จ\n${error.message}`);
+      return;
+    }
+
+    setTransactions((current) =>
+      current.filter((item) => item.id !== id),
+    );
+  }
+
+  function openQrModal() {
+    if (!isAdmin) {
+      openLoginModal();
+      return;
+    }
+
+    setQrInput(qrUrl);
+    setIsQrModalOpen(true);
+  }
+
+  function closeQrModal() {
+    setIsQrModalOpen(false);
+    setQrInput("");
+  }
+
+  async function saveQr() {
+    if (!isAdmin) {
+      openLoginModal();
+      return;
+    }
+
+    const cleanQrUrl = qrInput.trim();
+
+    const { error } = await supabase.from("settings").upsert(
+      {
+        key: "qr_url",
+        value: cleanQrUrl || null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "key" },
+    );
+
+    if (error) {
+      console.error("บันทึก QR ไม่สำเร็จ:", error);
+      alert(`บันทึก QR ไม่สำเร็จ\n${error.message}`);
+      return;
+    }
+
+    setQrUrl(cleanQrUrl);
+    closeQrModal();
+  }
+
+  if (!isReady) {
+    return (
+      <main
+        style={{
+          minHeight: "100vh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "var(--text-2)",
+        }}
+      >
+        กำลังโหลดข้อมูล...
+      </main>
+    );
+  }
+
+  return (
+    <>
+      <div className="bg-orbs">
+        <div className="orb orb-1" />
+        <div className="orb orb-2" />
+        <div className="orb orb-3" />
+      </div>
+
+      <nav className="navbar">
+        <button
+          type="button"
+          className="nav-brand"
+          onClick={() => router.push("/")}
+        >
+          <svg
+            width="26"
+            height="26"
+            viewBox="0 0 24 24"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
+              stroke="#60a5fa"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          OomBam Blossom FC
+        </button>
+
+        <div className="nav-right">
+          {isAdmin ? (
+            <>
+              <span className="admin-badge">👤 Admin</span>
+
+              <button
+                type="button"
+                className="btn-nav btn-logout"
+                onClick={() => void doLogout()}
+              >
+                ออกจากระบบ
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              className="btn-nav btn-login"
+              onClick={openLoginModal}
+            >
+              🔐 Admin Login
+            </button>
+          )}
+        </div>
+      </nav>
+
+      <div id="app">
+        {selectedEvent ? (
+          <main className="view active">
+            <div className="detail-hero section">
+              <button
+                type="button"
+                className="back-btn"
+                onClick={() => router.push("/")}
+              >
+                ← กลับหน้าหลัก
+              </button>
+
+              <h2>{selectedEvent.name}</h2>
+
+              {selectedEvent.desc && (
+                <p
+                  style={{
+                    color: "var(--text-2)",
+                    marginTop: "8px",
+                  }}
+                >
+                  {selectedEvent.desc}
+                </p>
+              )}
+
+              <div className="detail-stats">
+                <div className="detail-stat">
+                  <div className="detail-stat-label">เงินเข้า</div>
+                  <div
+                    className="detail-stat-val"
+                    style={{ color: "var(--income)" }}
+                  >
+                    ฿{formatMoney(selectedEventStats.income)}
+                  </div>
+                </div>
+
+                <div style={{ color: "var(--border)" }}>|</div>
+
+                <div className="detail-stat">
+                  <div className="detail-stat-label">เงินออก</div>
+                  <div
+                    className="detail-stat-val"
+                    style={{ color: "var(--expense)" }}
+                  >
+                    ฿{formatMoney(selectedEventStats.expense)}
+                  </div>
+                </div>
+
+                <div style={{ color: "var(--border)" }}>|</div>
+
+                <div className="detail-stat">
+                  <div className="detail-stat-label">ยอดสุทธิ</div>
+                  <div
+                    className="detail-stat-val"
+                    style={{
+                      color:
+                        selectedEventStats.balance >= 0
+                          ? "var(--income)"
+                          : "var(--expense)",
+                    }}
+                  >
+                    {selectedEventStats.balance < 0 ? "-" : ""}฿
+                    {formatMoney(Math.abs(selectedEventStats.balance))}
+                  </div>
+                </div>
+
+                <div style={{ color: "var(--border)" }}>|</div>
+
+                <div className="detail-stat">
+                  <div className="detail-stat-label">จำนวนรายการ</div>
+                  <div
+                    className="detail-stat-val"
+                    style={{ color: "var(--accent)" }}
+                  >
+                    {selectedEventStats.count}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <section className="section">
+              <div className="section-header">
+                <div className="section-title">รายการทั้งหมด</div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "8px",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <select
+                    className="form-control"
+                    value={transactionFilter}
+                    onChange={(event) =>
+                      setTransactionFilter(
+                        event.target.value as "" | "income" | "expense",
+                      )
+                    }
+                    style={{
+                      width: "auto",
+                      padding: "8px 14px",
+                      fontSize: ".85rem",
+                    }}
+                  >
+                    <option value="">ทุกประเภท</option>
+                    <option value="income">เงินเข้า</option>
+                    <option value="expense">เงินออก</option>
+                  </select>
+
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      className="btn btn-success"
+                      onClick={openCreateTransactionModal}
+                    >
+                      ➕ เพิ่มรายการ
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {filteredTransactions.length === 0 ? (
+                <div className="empty-state">
+                  <div className="empty-icon">🧾</div>
+                  <p>
+                    ยังไม่มีรายการ
+                    <br />
+                    {transactionFilter
+                      ? "ไม่พบรายการในประเภทนี้"
+                      : "รายการเงินเข้าและเงินออกจะแสดงที่นี่"}
+                  </p>
+                </div>
+              ) : (
+                <div className="tx-list">
+                  {filteredTransactions.map((transaction) => (
+                    <article
+                      key={transaction.id}
+                      className={`tx-card tx-${transaction.type}`}
+                    >
+                      <div className="tx-top">
+                        <div className="tx-info">
+                          <div className="tx-desc">{transaction.desc}</div>
+                          <div className="tx-date">
+                            {formatDate(transaction.date)}
+                          </div>
+                        </div>
+
+                        <div className="tx-amount">
+                          {transaction.type === "income" ? "+" : "-"}฿
+                          {formatMoney(transaction.amount)}
+                        </div>
+                      </div>
+
+                      <div className="tx-chips">
+                        <span
+                          className={`chip ${transaction.type === "income"
+                            ? "chip-income"
+                            : "chip-expense"
+                            }`}
+                        >
+                          {transaction.type === "income"
+                            ? "💰 เงินเข้า"
+                            : "💸 เงินออก"}
+                        </span>
+
+                        {transaction.note && (
+                          <span className="chip chip-file">
+                            📝 {transaction.note}
+                          </span>
+                        )}
+
+                        {isAdmin && (
+                          <>
+                            <button
+                              type="button"
+                              className="chip chip-file"
+                              onClick={() =>
+                                openEditTransactionModal(transaction)
+                              }
+                            >
+                              ✏️ แก้ไข
+                            </button>
+
+                            <button
+                              type="button"
+                              className="chip chip-expense"
+                              onClick={() =>
+                                void deleteTransaction(transaction.id)
+                              }
+                            >
+                              🗑️ ลบ
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="section">
+              <div className="section-header">
+                <div className="section-title">รูปภาพและตารางงาน</div>
+
+                {isAdmin && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => openEditEventModal(selectedEvent)}
+                  >
+                    ⚙️ ตั้งค่าลิงก์สื่อ
+                  </button>
+                )}
+              </div>
+
+              <div className="event-media-grid">
+                <div className="event-media-col event-media-gallery">
+                  <div className="event-media-heading">
+                    <div>
+                      <div className="event-media-title">📸 รูปภาพจากงาน</div>
+                    </div>
+
+                    {selectedEventImages.length > 0 && (
+                      <div className="slideshow-count">
+                        {selectedImageIndex + 1} / {selectedEventImages.length}
+                      </div>
+                    )}
+                  </div>
+
+                  {isLoadingEventImages ? (
+                    <div className="slideshow-empty slideshow-loading">
+                      <div className="slideshow-spinner" />
+                      <span>กำลังโหลดรูปจาก Google Drive...</span>
+                    </div>
+                  ) : eventImagesError ? (
+                    <div className="slideshow-empty">
+                      <span className="slideshow-empty-icon">⚠️</span>
+                      <span>{eventImagesError}</span>
+                    </div>
+                  ) : selectedEventImages.length > 0 ? (
+                    <div className="slideshow-wrap">
+                      <div className="slideshow-main">
+                        <div className="slideshow-image-backdrop" />
+
+                        <img
+                          src={selectedEventImages[selectedImageIndex].imageUrl}
+                          alt={
+                            selectedEventImages[selectedImageIndex]?.name ??
+                            `Event image ${selectedImageIndex + 1}`
+                          }
+                          className="slideshow-image"
+                          key={selectedEventImages[selectedImageIndex].id}
+                          onError={(event) => {
+                            event.currentTarget.style.opacity = "0.35";
+                          }}
+                        />
+
+                        <div className="slideshow-top-gradient" />
+                        <div className="slideshow-bottom-gradient" />
+
+
+
+                        {selectedEventImages.length > 1 && (
+                          <>
+                            <button
+                              type="button"
+                              className="slideshow-arrow prev"
+                              aria-label="รูปก่อนหน้า"
+                              onClick={() =>
+                                setSelectedImageIndex((current) =>
+                                  current === 0
+                                    ? selectedEventImages.length - 1
+                                    : current - 1,
+                                )
+                              }
+                            >
+                              ‹
+                            </button>
+
+                            <button
+                              type="button"
+                              className="slideshow-arrow next"
+                              aria-label="รูปถัดไป"
+                              onClick={() =>
+                                setSelectedImageIndex((current) =>
+                                  current === selectedEventImages.length - 1
+                                    ? 0
+                                    : current + 1,
+                                )
+                              }
+                            >
+                              ›
+                            </button>
+                          </>
+                        )}
+                      </div>
+
+                      {selectedEventImages.length > 1 && (
+                        <div className="slideshow-thumbs-wrap">
+                          <div className="slideshow-thumbs-label">
+                          </div>
+
+                          <div className="slideshow-thumbs">
+                            {selectedEventImages.map((image, index) => (
+                              <button
+                                type="button"
+                                key={`${image.id}-${index}`}
+                                className={`slideshow-thumb-btn ${index === selectedImageIndex ? "active" : ""
+                                  }`}
+                                onClick={() => setSelectedImageIndex(index)}
+                                aria-label={`เลือกรูปที่ ${index + 1}`}
+                                aria-current={
+                                  index === selectedImageIndex
+                                    ? "true"
+                                    : undefined
+                                }
+                              >
+                                <img
+                                  className="slideshow-thumb"
+                                  src={image.imageUrl}
+                                  alt={`Thumbnail ${index + 1}`}
+                                />
+                                <span className="slideshow-thumb-number">
+                                  {index + 1}
+                                </span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="slideshow-empty">
+                      <span className="slideshow-empty-icon">🖼️</span>
+                      <span>ยังไม่มีรูปภาพในโฟลเดอร์ Google Drive นี้</span>
+                    </div>
+                  )}
+                </div>
+
+                <div className="event-media-col event-schedule-card">
+                  <div className="event-media-heading">
+                    <div>
+                      <div className="event-media-title">📅 ตารางงาน</div>
+                    </div>
+                  </div>
+
+                  <div className="schedule-image-frame">
+                    <img
+                      className="event-media-img"
+                      src={getScheduleImageUrl(selectedEvent.scheduleUrl)}
+                      alt="Schedule"
+                    />
+                  </div>
+                </div>
+              </div>
+
+            </section>
+          </main>
+        ) : (
+          <main className="view active">
+            <div style={{ height: "40px" }} />
+
+            <section className="section">
+              <div className="stats-grid">
+                <div className="stat-card stat-income">
+                  <div className="stat-icon">💰</div>
+                  <div className="stat-label">รวมเงินเข้าทั้งหมด</div>
+                  <div className="stat-value">
+                    ฿{formatMoney(globalStats.income)}
+                  </div>
+                </div>
+
+                <div className="stat-card stat-expense">
+                  <div className="stat-icon">💸</div>
+                  <div className="stat-label">รวมเงินออกทั้งหมด</div>
+                  <div className="stat-value">
+                    ฿{formatMoney(globalStats.expense)}
+                  </div>
+                </div>
+
+                <div
+                  className={`stat-card stat-balance${globalStats.balance < 0 ? " negative" : ""
+                    }`}
+                >
+                  <div className="stat-icon">📊</div>
+                  <div className="stat-label">ยอดคงเหลือสุทธิ</div>
+                  <div className="stat-value">
+                    {globalStats.balance < 0 ? "-" : ""}฿
+                    {formatMoney(Math.abs(globalStats.balance))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="section-header">
+                <div className="section-title">สรุป Event ทั้งหมด</div>
+
+                {isAdmin && (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={openCreateEventModal}
+                  >
+                    ➕ เพิ่ม Event
+                  </button>
+                )}
+              </div>
+
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>ชื่อ Event</th>
+                      <th>รายการ</th>
+                      <th>เงินเข้า (฿)</th>
+                      <th>เงินออก (฿)</th>
+                      <th>ยอดสุทธิ (฿)</th>
+                      {isAdmin && <th>จัดการ</th>}
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {events.length === 0 ? (
+                      <tr>
+                        <td colSpan={isAdmin ? 6 : 5}>
+                          <div className="empty-state">
+                            <div className="empty-icon">📂</div>
+                            <p>
+                              ยังไม่มี Event
+                              <br />
+                              {isAdmin
+                                ? 'คลิก "เพิ่ม Event" เพื่อเริ่มต้น'
+                                : "รอข้อมูลจาก Admin"}
+                            </p>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : (
+                      events.map((event) => {
+                        const eventTransactions = transactions.filter(
+                          (transaction) => transaction.eventId === event.id,
+                        );
+
+                        const income = eventTransactions
+                          .filter(
+                            (transaction) => transaction.type === "income",
+                          )
+                          .reduce(
+                            (sum, transaction) =>
+                              sum + Number(transaction.amount),
+                            0,
+                          );
+
+                        const expense = eventTransactions
+                          .filter(
+                            (transaction) => transaction.type === "expense",
+                          )
+                          .reduce(
+                            (sum, transaction) =>
+                              sum + Number(transaction.amount),
+                            0,
+                          );
+
+                        const balance = income - expense;
+
+                        return (
+                          <tr
+                            key={event.id}
+                            onClick={() => openEventDetail(event.id)}
+                          >
+                            <td className="td-event-name">
+                              {event.name}
+
+                              {event.desc && (
+                                <div
+                                  style={{
+                                    fontSize: ".76rem",
+                                    color: "var(--text-3)",
+                                    marginTop: "2px",
+                                  }}
+                                >
+                                  {event.desc}
+                                </div>
+                              )}
+                            </td>
+
+                            <td>
+                              <span className="chip-count">
+                                {eventTransactions.length} รายการ
+                              </span>
+                            </td>
+
+                            <td className="td-income">
+                              ฿{formatMoney(income)}
+                            </td>
+
+                            <td className="td-expense">
+                              ฿{formatMoney(expense)}
+                            </td>
+
+                            <td
+                              className={`td-balance ${balance >= 0 ? "pos" : "neg"
+                                }`}
+                            >
+                              {balance < 0 ? "-" : ""}฿
+                              {formatMoney(Math.abs(balance))}
+                            </td>
+
+                            {isAdmin && (
+                              <td
+                                onClick={(eventObject) =>
+                                  eventObject.stopPropagation()
+                                }
+                              >
+                                <div className="td-actions">
+                                  <button
+                                    type="button"
+                                    className="btn btn-ghost btn-sm"
+                                    onClick={() =>
+                                      openEditEventModal(event)
+                                    }
+                                  >
+                                    ✏️ แก้ไข
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    className="btn btn-danger btn-sm"
+                                    onClick={() =>
+                                      void deleteEvent(event.id)
+                                    }
+                                  >
+                                    🗑️
+                                  </button>
+                                </div>
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <section className="donate-section">
+              <div className="donate-card">
+                {isAdmin && (
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm donate-admin-btn show"
+                    onClick={openQrModal}
+                  >
+                    ⚙️ ตั้งค่า QR
+                  </button>
+                )}
+
+                <div className="donate-qr-wrap">
+                  <div className="donate-qr-frame">
+                    {qrUrl ? (
+                      <img src={getQrImageUrl(qrUrl)} alt="QR Code โอนเงิน" />
+                    ) : (
+                      <div className="donate-qr-placeholder">
+                        <span className="qr-icon">📱</span>
+                        <span>
+                          QR Code
+                          <br />
+                          ยังไม่ได้ตั้งค่า
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="donate-qr-badge">📲 Scan to Pay</div>
+                </div>
+
+                <div className="donate-text">
+                  <div className="donate-eyebrow">ร่วมสนับสนุน</div>
+
+                  <div className="donate-title">
+                    ร่วมเป็นส่วนหนึ่งของ
+                    <br />
+                    <span>OomBam Blossom FC</span>
+                  </div>
+
+                  <p className="donate-desc">
+                    ทุกการสนับสนุนของคุณจะช่วยให้โปรเจคนี้เดินหน้าต่อไปได้
+                    สแกน QR Code หรือโอนเงินผ่านช่องทางด้านล่างได้เลย
+                    ขอบคุณทุกแรงใจที่มอบให้ 🌸
+                  </p>
+
+                  <div className="donate-methods">
+                    <span className="donate-method">🏦 PromptPay</span>
+                    <span className="donate-method">
+                      💳 โอนผ่านธนาคาร
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </main>
+        )}
+      </div>
+
+      {isEventModalOpen && (
+        <div
+          className="modal-overlay open"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeEventModal();
+            }
+          }}
+        >
+          <div className="modal">
+            <div className="modal-header">
+              <div className="modal-title">
+                {editingEventId ? "✏️ แก้ไข Event" : "➕ สร้าง Event ใหม่"}
+              </div>
+
+              <button
+                type="button"
+                className="modal-close"
+                onClick={closeEventModal}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">ชื่อ Event *</label>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="เช่น งานปีใหม่ 2025, โปรเจกต์ A..."
+                value={eventName}
+                onChange={(event) => setEventName(event.target.value)}
+                autoFocus
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">
+                รายละเอียด (ไม่บังคับ)
+              </label>
+              <textarea
+                className="form-control"
+                rows={3}
+                placeholder="รายละเอียดเพิ่มเติม..."
+                value={eventDesc}
+                onChange={(event) => setEventDesc(event.target.value)}
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">
+                🖼️ ลิงก์โฟลเดอร์รูปภาพ Google Drive
+              </label>
+              <input
+                type="url"
+                className="form-control"
+                placeholder="https://drive.google.com/drive/folders/..."
+                value={imageFolderUrl}
+                onChange={(event) => setImageFolderUrl(event.target.value)}
+              />
+              <div className="drive-hint">
+                📌 ใส่ลิงก์โฟลเดอร์เพียง 1 ลิงก์ ระบบจะดึงรูปทั้งหมดในโฟลเดอร์
+                <br />
+                🔓 ต้องตั้งโฟลเดอร์เป็น “ทุกคนที่มีลิงก์ → ผู้ดู”
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">
+                ลิงก์ภาพตารางงาน (Google Drive - ไม่บังคับ)
+              </label>
+              <input
+                type="url"
+                className="form-control"
+                placeholder="https://drive.google.com/file/d/..."
+                value={scheduleUrl}
+                onChange={(event) => setScheduleUrl(event.target.value)}
+              />
+              <div
+                className="drive-hint"
+                style={{ marginTop: "8px" }}
+              >
+                📎 ใส่ลิงก์ภาพตารางงาน หรือเว้นว่างเพื่อใช้ภาพเริ่มต้น
+              </div>
+            </div>
+
+            <div className="form-actions">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={closeEventModal}
+              >
+                ยกเลิก
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void saveEvent()}
+              >
+                💾 บันทึก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isTransactionModalOpen && (
+        <div
+          className="modal-overlay open"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeTransactionModal();
+            }
+          }}
+        >
+          <div className="modal">
+            <div className="modal-header">
+              <div className="modal-title">
+                {editingTransactionId
+                  ? "✏️ แก้ไขรายการ"
+                  : "➕ เพิ่มรายการ"}
+              </div>
+
+              <button
+                type="button"
+                className="modal-close"
+                onClick={closeTransactionModal}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">วันที่ *</label>
+                <input
+                  type="date"
+                  className="form-control"
+                  value={transactionDate}
+                  onChange={(event) =>
+                    setTransactionDate(event.target.value)
+                  }
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">ประเภท *</label>
+                <select
+                  className="form-control"
+                  value={transactionType}
+                  onChange={(event) =>
+                    setTransactionType(
+                      event.target.value as "income" | "expense",
+                    )
+                  }
+                >
+                  <option value="income">เงินเข้า</option>
+                  <option value="expense">เงินออก</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">รายละเอียด *</label>
+              <input
+                type="text"
+                className="form-control"
+                placeholder="เช่น เงินสนับสนุน, ค่าเดินทาง, ค่าอาหาร..."
+                value={transactionDesc}
+                onChange={(event) =>
+                  setTransactionDesc(event.target.value)
+                }
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">
+                จำนวนเงิน (฿) *
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                className={`form-control ${transactionType === "income"
+                  ? "input-type-income"
+                  : "input-type-expense"
+                  }`}
+                placeholder="0.00"
+                value={transactionAmount}
+                onChange={(event) =>
+                  setTransactionAmount(event.target.value)
+                }
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">
+                หมายเหตุ (ไม่บังคับ)
+              </label>
+              <textarea
+                className="form-control"
+                rows={3}
+                placeholder="รายละเอียดเพิ่มเติม..."
+                value={transactionNote}
+                onChange={(event) =>
+                  setTransactionNote(event.target.value)
+                }
+              />
+            </div>
+
+            <div className="form-actions">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={closeTransactionModal}
+              >
+                ยกเลิก
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void saveTransaction()}
+              >
+                💾 บันทึก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isLoginModalOpen && (
+        <div
+          className="modal-overlay open"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeLoginModal();
+            }
+          }}
+        >
+          <div className="modal login-modal">
+            <div className="login-icon">🔐</div>
+
+            <div
+              className="modal-header"
+              style={{
+                justifyContent: "center",
+                marginBottom: "20px",
+              }}
+            >
+              <div
+                className="modal-title"
+                style={{ fontSize: "1.3rem" }}
+              >
+                Admin Login
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">อีเมล</label>
+              <input
+                type="email"
+                className="form-control"
+                placeholder="admin@example.com"
+                value={loginEmail}
+                onChange={(event) => {
+                  setLoginEmail(event.target.value);
+                  setLoginError("");
+                }}
+                autoFocus
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">รหัสผ่าน</label>
+              <input
+                type="password"
+                className="form-control"
+                placeholder="ใส่รหัสผ่าน..."
+                value={loginPassword}
+                onChange={(event) => {
+                  setLoginPassword(event.target.value);
+                  setLoginError("");
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    void doLogin();
+                  }
+                }}
+              />
+
+              {loginError && (
+                <div className="error-msg show">
+                  {loginError}
+                </div>
+              )}
+            </div>
+
+            <div className="form-actions">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={closeLoginModal}
+              >
+                ยกเลิก
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void doLogin()}
+              >
+                🔓 เข้าสู่ระบบ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isQrModalOpen && (
+        <div
+          className="modal-overlay open"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeQrModal();
+            }
+          }}
+        >
+          <div className="modal">
+            <div className="modal-header">
+              <div className="modal-title">
+                ⚙️ ตั้งค่า QR Code
+              </div>
+
+              <button
+                type="button"
+                className="modal-close"
+                onClick={closeQrModal}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">
+                ลิงก์ภาพ QR Code
+              </label>
+
+              <input
+                type="url"
+                className="form-control"
+                placeholder="วางลิงก์ Google Drive หรือ https://..."
+                value={qrInput}
+                onChange={(event) =>
+                  setQrInput(event.target.value)
+                }
+              />
+
+              <div
+                className="drive-hint"
+                style={{ marginTop: "8px" }}
+              >
+                📎 วางลิงก์แชร์ Google Drive ของรูป QR ได้เลย
+                <br />
+                🔓 ตั้งสิทธิ์ไฟล์เป็น “ทุกคนที่มีลิงก์ → ผู้ดู”
+                <br />
+                ☁️ ระบบจะบันทึกลิงก์ไว้ใน Supabase และแปลงลิงก์ Drive ให้อัตโนมัติ
+              </div>
+            </div>
+
+            <div className="form-actions">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={closeQrModal}
+              >
+                ยกเลิก
+              </button>
+
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={saveQr}
+              >
+                💾 บันทึก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
