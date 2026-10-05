@@ -19,14 +19,38 @@ type EventItem = {
   createdAt: string;
 };
 
+type TransactionAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  webViewLink: string;
+  webContentLink?: string | null;
+  category?: "slip" | "document";
+};
+
+type SlipData = {
+  bankName: string;
+  transactionType: "income" | "expense" | "unknown";
+  payerName: string;
+  payerAccount: string;
+  payeeName: string;
+  payeeAccount: string;
+  transferDate: string;
+  transferTime: string;
+  amount: number | null;
+};
+
 type TransactionItem = {
   id: string;
   eventId: string;
   date: string;
+  time: string;
   type: "income" | "expense";
   desc: string;
   amount: number;
   note: string;
+  attachments: TransactionAttachment[];
+  slipData: SlipData | null;
   createdAt: string;
 };
 
@@ -43,10 +67,15 @@ type TransactionRow = {
   id: string;
   event_id: string;
   date: string;
+  time: string | null;
   type: "income" | "expense";
   description: string;
   amount: number | string;
   note: string | null;
+  attachments: unknown;
+  slip_data: unknown;
+  attachment_url: string | null;
+  attachment_name: string | null;
   created_at: string;
 };
 
@@ -143,6 +172,27 @@ function getQrImageUrl(url: string) {
     : url;
 }
 
+function isImageAttachment(attachment: TransactionAttachment) {
+  if (attachment.mimeType.startsWith("image/")) return true;
+
+  return /\.(jpe?g|png|webp|gif)$/i.test(attachment.name);
+}
+
+function getAttachmentImagePreviewUrl(attachment: TransactionAttachment) {
+  const id =
+    attachment.id ||
+    getDriveFileId(attachment.webViewLink) ||
+    "";
+
+  return id.startsWith("legacy-")
+    ? attachment.webViewLink
+    : `https://lh3.googleusercontent.com/d/${id}=s0`;
+}
+
+function getAttachmentDownloadUrl(attachment: TransactionAttachment) {
+  return attachment.webContentLink || attachment.webViewLink;
+}
+
 function mapEvent(row: EventRow): EventItem {
   return {
     id: row.id,
@@ -155,14 +205,93 @@ function mapEvent(row: EventRow): EventItem {
 }
 
 function mapTransaction(row: TransactionRow): TransactionItem {
+  const rawAttachments = Array.isArray(row.attachments)
+    ? row.attachments
+    : [];
+
+  const attachments = rawAttachments
+    .filter(
+      (item): item is Record<string, unknown> =>
+        !!item &&
+        typeof item === "object" &&
+        typeof (item as Record<string, unknown>).id === "string" &&
+        typeof (item as Record<string, unknown>).name === "string" &&
+        typeof (item as Record<string, unknown>).mimeType === "string",
+    )
+    .map((item): TransactionAttachment => ({
+      id: String(item.id),
+      name: String(item.name),
+      mimeType: String(item.mimeType),
+      webViewLink:
+        typeof item.webViewLink === "string"
+          ? item.webViewLink
+          : `https://drive.google.com/file/d/${String(item.id)}/view`,
+      webContentLink:
+        typeof item.webContentLink === "string"
+          ? item.webContentLink
+          : null,
+      category:
+        item.category === "slip" || item.category === "document"
+          ? item.category
+          : undefined,
+    }));
+
+  // รองรับข้อมูลเก่าแบบไฟล์เดียวจาก attachment_url / attachment_name
+  if (
+    attachments.length === 0 &&
+    row.attachment_url &&
+    row.attachment_name
+  ) {
+    const id =
+      row.attachment_url.match(/\/d\/([\w-]+)/)?.[1] ??
+      row.attachment_url.match(/[?&]id=([\w-]+)/)?.[1];
+
+    attachments.push({
+      id: id ?? `legacy-${row.id}`,
+      name: row.attachment_name,
+      mimeType: "application/octet-stream",
+      webViewLink: row.attachment_url,
+      webContentLink: null,
+    });
+  }
+
+  const rawSlipData =
+    row.slip_data && typeof row.slip_data === "object"
+      ? (row.slip_data as Record<string, unknown>)
+      : null;
+
+  const slipData: SlipData | null = rawSlipData
+    ? {
+      bankName: String(rawSlipData.bankName ?? ""),
+      transactionType:
+        rawSlipData.transactionType === "income" ||
+          rawSlipData.transactionType === "expense"
+          ? rawSlipData.transactionType
+          : "unknown",
+      payerName: String(rawSlipData.payerName ?? ""),
+      payerAccount: String(rawSlipData.payerAccount ?? ""),
+      payeeName: String(rawSlipData.payeeName ?? ""),
+      payeeAccount: String(rawSlipData.payeeAccount ?? ""),
+      transferDate: String(rawSlipData.transferDate ?? ""),
+      transferTime: String(rawSlipData.transferTime ?? ""),
+      amount:
+        rawSlipData.amount === null || rawSlipData.amount === undefined
+          ? null
+          : Number(rawSlipData.amount),
+    }
+    : null;
+
   return {
     id: row.id,
     eventId: row.event_id,
     date: row.date,
+    time: row.time ?? "",
     type: row.type,
     desc: row.description,
     amount: Number(row.amount),
     note: row.note ?? "",
+    attachments,
+    slipData,
     createdAt: row.created_at,
   };
 }
@@ -195,17 +324,35 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
     null,
   );
   const [transactionDate, setTransactionDate] = useState("");
+  const [transactionTime, setTransactionTime] = useState("");
   const [transactionType, setTransactionType] =
     useState<"income" | "expense">("income");
   const [transactionDesc, setTransactionDesc] = useState("");
   const [transactionAmount, setTransactionAmount] = useState("");
   const [transactionNote, setTransactionNote] = useState("");
+  const [transactionSlipFile, setTransactionSlipFile] = useState<File | null>(null);
+  const [transactionSlipData, setTransactionSlipData] = useState<SlipData | null>(null);
+  const [isReadingSlip, setIsReadingSlip] = useState(false);
+  const [slipError, setSlipError] = useState("");
+  const [transactionAttachments, setTransactionAttachments] = useState<File[]>([]);
+  const [transactionExistingAttachments, setTransactionExistingAttachments] =
+    useState<TransactionAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState("");
+  const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
+  const [attachmentUploadProgress, setAttachmentUploadProgress] = useState(0);
+  const [previewAttachment, setPreviewAttachment] =
+    useState<TransactionAttachment | null>(null);
+  const [isSchedulePreviewOpen, setIsSchedulePreviewOpen] = useState(false);
   const [transactionFilter, setTransactionFilter] =
     useState<"" | "income" | "expense">("");
 
   const [qrUrl, setQrUrl] = useState("");
   const [qrInput, setQrInput] = useState("");
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [bankName, setBankName] = useState("");
+  const [bankAccountNumber, setBankAccountNumber] = useState("");
+  const [bankAccountName, setBankAccountName] = useState("");
+  const [toastMessage, setToastMessage] = useState("");
 
   const [selectedEventImages, setSelectedEventImages] = useState<DriveImage[]>([]);
   const [isLoadingEventImages, setIsLoadingEventImages] = useState(false);
@@ -321,6 +468,10 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       .sort((a, b) => {
         const dateCompare = b.date.localeCompare(a.date);
         if (dateCompare !== 0) return dateCompare;
+
+        const timeCompare = (b.time || "").localeCompare(a.time || "");
+        if (timeCompare !== 0) return timeCompare;
+
         return b.createdAt.localeCompare(a.createdAt);
       });
   }, [selectedEventId, transactionFilter, transactions]);
@@ -330,7 +481,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       { data: sessionData },
       { data: eventRows, error: eventsError },
       { data: transactionRows, error: transactionsError },
-      { data: settingRow, error: settingsError },
+      { data: settingRows, error: settingsError },
     ] = await Promise.all([
       supabase.auth.getSession(),
       supabase
@@ -342,14 +493,18 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       supabase
         .from("transactions")
         .select(
-          "id, event_id, date, type, description, amount, note, created_at",
+          "id, event_id, date, time, type, description, amount, note, attachments, slip_data, attachment_url, attachment_name, created_at",
         )
         .order("date", { ascending: false }),
       supabase
         .from("settings")
         .select("key, value, updated_at")
-        .eq("key", "qr_url")
-        .maybeSingle(),
+        .in("key", [
+          "qr_url",
+          "bank_name",
+          "bank_account_number",
+          "bank_account_name",
+        ]),
     ]);
 
     if (eventsError) {
@@ -373,8 +528,21 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
     if (settingsError) {
       console.error("โหลด Settings ไม่สำเร็จ:", settingsError);
       setQrUrl("");
+      setBankName("");
+      setBankAccountNumber("");
+      setBankAccountName("");
     } else {
-      setQrUrl((settingRow as SettingRow | null)?.value ?? "");
+      const settings = ((settingRows ?? []) as SettingRow[]).reduce<
+        Record<string, string>
+      >((result, row) => {
+        result[row.key] = row.value ?? "";
+        return result;
+      }, {});
+
+      setQrUrl(settings.qr_url ?? "");
+      setBankName(settings.bank_name ?? "");
+      setBankAccountNumber(settings.bank_account_number ?? "");
+      setBankAccountName(settings.bank_account_name ?? "");
     }
 
     setIsAdmin(!!sessionData.session);
@@ -596,10 +764,19 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
   function resetTransactionForm() {
     setEditingTransactionId(null);
     setTransactionDate(new Date().toISOString().slice(0, 10));
+    setTransactionTime("");
     setTransactionType("income");
     setTransactionDesc("");
     setTransactionAmount("");
     setTransactionNote("");
+    setTransactionSlipFile(null);
+    setTransactionSlipData(null);
+    setIsReadingSlip(false);
+    setSlipError("");
+    setTransactionAttachments([]);
+    setTransactionExistingAttachments([]);
+    setAttachmentError("");
+    setAttachmentUploadProgress(0);
   }
 
   function openCreateTransactionModal() {
@@ -622,16 +799,224 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
 
     setEditingTransactionId(transaction.id);
     setTransactionDate(transaction.date);
+    setTransactionTime(transaction.time);
     setTransactionType(transaction.type);
     setTransactionDesc(transaction.desc);
     setTransactionAmount(String(transaction.amount));
     setTransactionNote(transaction.note);
+    setTransactionSlipFile(null);
+    setTransactionSlipData(transaction.slipData);
+    setIsReadingSlip(false);
+    setSlipError("");
+    setTransactionAttachments([]);
+    setTransactionExistingAttachments(transaction.attachments);
+    setAttachmentError("");
+    setAttachmentUploadProgress(0);
     setIsTransactionModalOpen(true);
   }
 
   function closeTransactionModal() {
     setIsTransactionModalOpen(false);
     resetTransactionForm();
+  }
+
+  function getAttachmentSlotCount() {
+    return (
+      transactionExistingAttachments.length +
+      transactionAttachments.length +
+      (transactionSlipFile ? 1 : 0)
+    );
+  }
+
+  async function handleSlipFileChange(file: File | null) {
+    setSlipError("");
+    if (!file) return;
+
+    const allowedTypes = new Set([
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "image/gif",
+    ]);
+
+    if (!allowedTypes.has(file.type)) {
+      setSlipError("สลิปต้องเป็นไฟล์รูปภาพ JPG, PNG, WEBP หรือ GIF");
+      return;
+    }
+
+    if (file.size > 4 * 1024 * 1024) {
+      setSlipError("ไฟล์สลิปมีขนาดเกิน 4 MB");
+      return;
+    }
+
+    if (getAttachmentSlotCount() >= 5 && !transactionSlipFile) {
+      setSlipError("แนบไฟล์ได้สูงสุด 5 ไฟล์ต่อรายการ");
+      return;
+    }
+
+    setIsReadingSlip(true);
+    setSlipError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("accountName", bankAccountName.trim());
+
+      const accountDigits = bankAccountNumber.replace(/\D/g, "");
+      formData.append(
+        "accountNumberLast4",
+        accountDigits.slice(-4),
+      );
+
+      const response = await fetch("/api/ocr-slip", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || "อ่านข้อมูลจากสลิปไม่สำเร็จ");
+      }
+
+      const parsed = data?.slip as SlipData | null;
+
+      setTransactionSlipFile(file);
+      setTransactionSlipData(parsed);
+
+      if (
+        parsed?.transactionType === "income" ||
+        parsed?.transactionType === "expense"
+      ) {
+        setTransactionType(parsed.transactionType);
+      }
+
+      if (parsed?.transferDate) {
+        setTransactionDate(parsed.transferDate);
+      }
+
+      if (parsed?.transferTime) {
+        setTransactionTime(parsed.transferTime);
+      }
+
+      if (typeof parsed?.amount === "number" && Number.isFinite(parsed.amount)) {
+        setTransactionAmount(String(parsed.amount));
+      }
+
+      const payer = parsed?.payerName?.trim() || "";
+      const payee = parsed?.payeeName?.trim() || "";
+
+      if (payer || payee) {
+        setTransactionDesc(
+          [payer, payee].filter(Boolean).join(" → ") || transactionDesc,
+        );
+      }
+
+      const ownName = bankAccountName.trim().toLowerCase();
+      const ownAccount = bankAccountNumber.replace(/\D/g, "");
+      const payerAccount = (parsed?.payerAccount ?? "").replace(/\D/g, "");
+      const payeeAccount = (parsed?.payeeAccount ?? "").replace(/\D/g, "");
+      const payerMatchesOwn =
+        (!!ownName && payer.toLowerCase().includes(ownName)) ||
+        (!!ownAccount && payerAccount.endsWith(ownAccount));
+      const payeeMatchesOwn =
+        (!!ownName && payee.toLowerCase().includes(ownName)) ||
+        (!!ownAccount && payeeAccount.endsWith(ownAccount));
+
+      if (payeeMatchesOwn && !payerMatchesOwn) {
+        setTransactionType("income");
+      } else if (payerMatchesOwn && !payeeMatchesOwn) {
+        setTransactionType("expense");
+      }
+    } catch (error) {
+      console.error("อ่านสลิปไม่สำเร็จ:", error);
+      setTransactionSlipFile(null);
+      setTransactionSlipData(null);
+      setSlipError(
+        error instanceof Error ? error.message : "อ่านข้อมูลจากสลิปไม่สำเร็จ",
+      );
+    } finally {
+      setIsReadingSlip(false);
+    }
+  }
+
+  function handleTransactionDocumentChange(files: FileList | null) {
+    setAttachmentError("");
+    if (!files) return;
+
+    const selected = Array.from(files);
+
+    const allowedTypes = new Set([
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "image/gif",
+      "application/pdf",
+    ]);
+
+    const invalidType = selected.find((file) => !allowedTypes.has(file.type));
+    if (invalidType) {
+      setAttachmentError(
+        `ไฟล์ "${invalidType.name}" ไม่รองรับ รองรับรูปภาพ JPG, PNG, WEBP, GIF และ PDF`,
+      );
+      return;
+    }
+
+    const tooLarge = selected.find((file) => file.size > 4 * 1024 * 1024);
+    if (tooLarge) {
+      setAttachmentError(`ไฟล์ "${tooLarge.name}" มีขนาดเกิน 4 MB`);
+      return;
+    }
+
+    const availableSlots = 5 - getAttachmentSlotCount();
+
+    if (selected.length > availableSlots) {
+      setAttachmentError(
+        `แนบไฟล์ได้สูงสุด 5 ไฟล์ต่อรายการ (ตอนนี้เหลือ ${availableSlots} ช่อง)`,
+      );
+      return;
+    }
+
+    setTransactionAttachments((current) => [...current, ...selected]);
+  }
+
+  function removeTransactionSlip() {
+    setTransactionSlipFile(null);
+    setTransactionSlipData(null);
+    setSlipError("");
+  }
+
+  function removeNewTransactionAttachment(index: number) {
+    setTransactionAttachments((current) =>
+      current.filter((_, itemIndex) => itemIndex !== index),
+    );
+    setAttachmentError("");
+  }
+
+  async function uploadTransactionAttachment(file: File) {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch("/api/google/upload", {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        throw new Error(
+          "ยังไม่ได้เชื่อมต่อ Google Drive กรุณาเชื่อม Google Drive ก่อนอัปโหลดไฟล์",
+        );
+      }
+
+      throw new Error(data?.error || "อัปโหลดไฟล์ไม่สำเร็จ");
+    }
+
+    return data.file as TransactionAttachment & {
+      size?: string;
+    };
   }
 
   async function saveTransaction() {
@@ -663,32 +1048,100 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       return;
     }
 
+    if (attachmentError) {
+      alert(attachmentError);
+      return;
+    }
+
+    if (getAttachmentSlotCount() > 5) {
+      alert("แนบไฟล์ได้สูงสุด 5 ไฟล์ต่อรายการ");
+      return;
+    }
+
+    let finalAttachments = [...transactionExistingAttachments];
+    const filesToUpload: Array<{ file: File; category: "slip" | "document" }> = [];
+
+    if (transactionSlipFile) {
+      filesToUpload.push({ file: transactionSlipFile, category: "slip" });
+    }
+
+    for (const file of transactionAttachments) {
+      filesToUpload.push({ file, category: "document" });
+    }
+
+    if (filesToUpload.length > 0) {
+      setIsUploadingAttachment(true);
+      setAttachmentUploadProgress(0);
+
+      try {
+        for (let index = 0; index < filesToUpload.length; index += 1) {
+          const { file, category } = filesToUpload[index];
+          const uploadedFile = await uploadTransactionAttachment(file);
+
+          finalAttachments.push({
+            id: uploadedFile.id,
+            name: uploadedFile.name,
+            mimeType: uploadedFile.mimeType,
+            webViewLink:
+              uploadedFile.webViewLink ??
+              `https://drive.google.com/file/d/${uploadedFile.id}/view`,
+            webContentLink: uploadedFile.webContentLink ?? null,
+            category,
+          });
+
+          setAttachmentUploadProgress(index + 1);
+        }
+      } catch (error) {
+        console.error("อัปโหลดไฟล์แนบไม่สำเร็จ:", error);
+        alert(
+          error instanceof Error
+            ? error.message
+            : "อัปโหลดไฟล์แนบไม่สำเร็จ",
+        );
+        return;
+      } finally {
+        setIsUploadingAttachment(false);
+      }
+    }
+
+    const firstAttachment = finalAttachments[0];
+
+    const attachmentPayload = {
+      attachments: finalAttachments,
+      slip_data: transactionSlipData,
+      // เก็บค่าเดิมไว้ด้วยเพื่อ backward compatibility
+      attachment_url: firstAttachment?.webViewLink || null,
+      attachment_name: firstAttachment?.name || null,
+    };
+
     if (editingTransactionId) {
       const { data, error } = await supabase
         .from("transactions")
         .update({
           date: transactionDate,
+          time: transactionTime || null,
           type: transactionType,
           description: cleanDesc,
           amount,
           note: transactionNote.trim() || null,
+          ...attachmentPayload,
         })
         .eq("id", editingTransactionId)
         .eq("event_id", selectedEventId)
         .select(
-          "id, event_id, date, type, description, amount, note, created_at",
+          "id, event_id, date, time, type, description, amount, note, attachments, slip_data, attachment_url, attachment_name, created_at",
         )
         .single();
 
       if (error || !data) {
         console.error("แก้ไขรายการไม่สำเร็จ:", error);
-        alert(`แก้ไขรายการไม่สำเร็จ\n${error?.message ?? "ไม่พบรายการ"}`);
+        alert(
+          `แก้ไขรายการไม่สำเร็จ\n${error?.message ?? "ไม่พบรายการ"}`,
+        );
         return;
       }
 
-      const updatedTransaction = mapTransaction(
-        data as TransactionRow,
-      );
+      const updatedTransaction = mapTransaction(data as TransactionRow);
 
       setTransactions((current) =>
         current.map((transaction) =>
@@ -703,19 +1156,23 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
         .insert({
           event_id: selectedEventId,
           date: transactionDate,
+          time: transactionTime || null,
           type: transactionType,
           description: cleanDesc,
           amount,
           note: transactionNote.trim() || null,
+          ...attachmentPayload,
         })
         .select(
-          "id, event_id, date, type, description, amount, note, created_at",
+          "id, event_id, date, time, type, description, amount, note, attachments, slip_data, attachment_url, attachment_name, created_at",
         )
         .single();
 
       if (error || !data) {
         console.error("เพิ่มรายการไม่สำเร็จ:", error);
-        alert(`เพิ่มรายการไม่สำเร็จ\n${error?.message ?? "ไม่พบรายการที่สร้าง"}`);
+        alert(
+          `เพิ่มรายการไม่สำเร็จ\n${error?.message ?? "ไม่พบรายการที่สร้าง"}`,
+        );
         return;
       }
 
@@ -725,6 +1182,13 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       ]);
     }
 
+    setTransactionSlipFile(null);
+    setTransactionSlipData(null);
+    setSlipError("");
+    setTransactionAttachments([]);
+    setTransactionExistingAttachments(finalAttachments);
+    setAttachmentError("");
+    setAttachmentUploadProgress(0);
     closeTransactionModal();
   }
 
@@ -758,6 +1222,77 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
     setTransactions((current) =>
       current.filter((item) => item.id !== id),
     );
+  }
+
+  function showToast(message: string) {
+    setToastMessage(message);
+    window.setTimeout(() => setToastMessage(""), 2200);
+  }
+
+  async function saveQrImage() {
+    const imageUrl = qrUrl ? getQrImageUrl(qrUrl) : "";
+
+    if (!imageUrl) {
+      showToast("ยังไม่มี QR Code ให้บันทึก");
+      return;
+    }
+
+    try {
+      const response = await fetch(imageUrl, { mode: "cors" });
+
+      if (!response.ok) {
+        throw new Error("ไม่สามารถดาวน์โหลด QR Code ได้");
+      }
+
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      link.href = blobUrl;
+      link.download = "oombam-blossom-fc-qr.png";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      showToast("บันทึก QR Code แล้ว");
+    } catch (error) {
+      console.error("บันทึก QR ไม่สำเร็จ:", error);
+
+      // fallback หากเบราว์เซอร์ไม่อนุญาตให้ดึงภาพข้ามโดเมน
+      window.open(imageUrl, "_blank", "noopener,noreferrer");
+      showToast("เปิด QR Code แล้ว กดบันทึกจากหน้ารูปได้เลย");
+    }
+  }
+
+  async function copyBankAccount() {
+    const accountNumber = bankAccountNumber.trim();
+
+    if (!accountNumber) {
+      showToast("ยังไม่ได้ตั้งค่าหมายเลขบัญชี");
+      return;
+    }
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(accountNumber);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = accountNumber;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        textarea.remove();
+      }
+
+      showToast("คัดลอกหมายเลขบัญชีแล้ว");
+    } catch (error) {
+      console.error("คัดลอกหมายเลขบัญชีไม่สำเร็จ:", error);
+      showToast(`หมายเลขบัญชี: ${accountNumber}`);
+    }
   }
 
   function openQrModal() {
@@ -1020,6 +1555,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
                           <div className="tx-desc">{transaction.desc}</div>
                           <div className="tx-date">
                             {formatDate(transaction.date)}
+                            {transaction.time ? ` • ${transaction.time.slice(0, 5)}` : ""}
                           </div>
                         </div>
 
@@ -1045,6 +1581,32 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
                           <span className="chip chip-file">
                             📝 {transaction.note}
                           </span>
+                        )}
+
+                        {transaction.attachments.map((attachment) =>
+                          isImageAttachment(attachment) ? (
+                            <button
+                              key={attachment.id}
+                              type="button"
+                              className="chip chip-file transaction-attachment-chip"
+                              onClick={() => setPreviewAttachment(attachment)}
+                              title="ดูภาพตัวอย่าง"
+                            >
+                              🖼️ {attachment.name}
+                            </button>
+                          ) : (
+                            <a
+                              key={attachment.id}
+                              className="chip chip-file transaction-attachment-chip"
+                              href={getAttachmentDownloadUrl(attachment)}
+                              download
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              title="ดาวน์โหลดเอกสาร"
+                            >
+                              📄 {attachment.name}
+                            </a>
+                          ),
                         )}
 
                         {isAdmin && (
@@ -1176,8 +1738,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
 
                       {selectedEventImages.length > 1 && (
                         <div className="slideshow-thumbs-wrap">
-                          <div className="slideshow-thumbs-label">
-                          </div>
+
 
                           <div className="slideshow-thumbs">
                             {selectedEventImages.map((image, index) => (
@@ -1223,13 +1784,19 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
                     </div>
                   </div>
 
-                  <div className="schedule-image-frame">
+                  <button
+                    type="button"
+                    className="schedule-image-frame"
+                    onClick={() => setIsSchedulePreviewOpen(true)}
+                    aria-label="เปิดตารางงานแบบขยาย"
+                    style={{ cursor: "zoom-in" }}
+                  >
                     <img
                       className="event-media-img"
                       src={getScheduleImageUrl(selectedEvent.scheduleUrl)}
                       alt="Schedule"
                     />
-                  </div>
+                  </button>
                 </div>
               </div>
 
@@ -1242,7 +1809,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
             <section className="section">
               <div className="stats-grid">
                 <div className="stat-card stat-income">
-                  <div className="stat-icon">💰</div>
+                  <div className="stat-icon stat-icon-image"><img src="/icons/income.png" alt="เงินเข้า" /></div>
                   <div className="stat-label">รวมเงินเข้าทั้งหมด</div>
                   <div className="stat-value">
                     ฿{formatMoney(globalStats.income)}
@@ -1250,7 +1817,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
                 </div>
 
                 <div className="stat-card stat-expense">
-                  <div className="stat-icon">💸</div>
+                  <div className="stat-icon stat-icon-image"><img src="/icons/expense.png" alt="เงินออก" /></div>
                   <div className="stat-label">รวมเงินออกทั้งหมด</div>
                   <div className="stat-value">
                     ฿{formatMoney(globalStats.expense)}
@@ -1261,7 +1828,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
                   className={`stat-card stat-balance${globalStats.balance < 0 ? " negative" : ""
                     }`}
                 >
-                  <div className="stat-icon">📊</div>
+                  <div className="stat-icon stat-icon-image"><img src="/icons/balance.png" alt="ยอดคงเหลือสุทธิ" /></div>
                   <div className="stat-label">ยอดคงเหลือสุทธิ</div>
                   <div className="stat-value">
                     {globalStats.balance < 0 ? "-" : ""}฿
@@ -1468,11 +2035,65 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
                     ขอบคุณทุกแรงใจที่มอบให้ 🌸
                   </p>
 
+                  <div
+                    style={{
+                      margin: "18px 0 20px",
+                      padding: "14px 16px",
+                      borderRadius: "14px",
+                      background: "rgba(255, 255, 255, 0.04)",
+                      border: "1px solid var(--border)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: ".78rem",
+                        color: "var(--text-3)",
+                        marginBottom: "8px",
+                      }}
+                    >
+                      ข้อมูลสำหรับโอนเงิน
+                    </div>
+
+                    <div
+                      style={{
+                        display: "grid",
+                        gap: "5px",
+                        fontSize: ".88rem",
+                      }}
+                    >
+                      <div>
+                        <span style={{ color: "var(--text-3)" }}>ธนาคาร: </span>
+                        <strong>{bankName || "—"}</strong>
+                      </div>
+
+                      <div>
+                        <span style={{ color: "var(--text-3)" }}>เลขที่บัญชี: </span>
+                        <strong>{bankAccountNumber || "—"}</strong>
+                      </div>
+
+                      <div>
+                        <span style={{ color: "var(--text-3)" }}>ชื่อบัญชี: </span>
+                        <strong>{bankAccountName || "—"}</strong>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="donate-methods">
-                    <span className="donate-method">🏦 PromptPay</span>
-                    <span className="donate-method">
-                      💳 โอนผ่านธนาคาร
-                    </span>
+                    <button
+                      type="button"
+                      className="donate-method donate-method-button donate-method-save"
+                      onClick={() => void saveQrImage()}
+                    >
+                      💾 Save QR
+                    </button>
+
+                    <button
+                      type="button"
+                      className="donate-method donate-method-button donate-method-copy"
+                      onClick={() => void copyBankAccount()}
+                    >
+                      📋 คัดลอกหมายเลขบัญชี
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1628,6 +2249,19 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
               </div>
 
               <div className="form-group">
+                <label className="form-label">เวลา</label>
+                <input
+                  type="time"
+                  step="1"
+                  className="form-control"
+                  value={transactionTime}
+                  onChange={(event) =>
+                    setTransactionTime(event.target.value)
+                  }
+                />
+              </div>
+
+              <div className="form-group">
                 <label className="form-label">ประเภท *</label>
                 <select
                   className="form-control"
@@ -1692,6 +2326,204 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
               />
             </div>
 
+            <div className="form-group">
+              <label className="form-label">📎 ไฟล์ประกอบรายการ</label>
+
+              <div className="transaction-upload-grid">
+                <label className="transaction-upload-card transaction-upload-slip">
+                  <span className="transaction-upload-icon">🧾</span>
+                  <span className="transaction-upload-title">อัปโหลดสลิป</span>
+                  <span className="transaction-upload-subtitle">
+                    ระบบจะอ่านธนาคาร ประเภท ผู้โอน ผู้รับ วันที่ เวลา และจำนวนเงิน
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    onChange={(event) => {
+                      void handleSlipFileChange(event.target.files?.[0] ?? null);
+                      event.currentTarget.value = "";
+                    }}
+                    disabled={
+                      isUploadingAttachment ||
+                      isReadingSlip ||
+                      (getAttachmentSlotCount() >= 5 && !transactionSlipFile)
+                    }
+                    hidden
+                  />
+                </label>
+
+                <label className="transaction-upload-card transaction-upload-document">
+                  <span className="transaction-upload-icon">📎</span>
+                  <span className="transaction-upload-title">อัปโหลดเอกสาร</span>
+                  <span className="transaction-upload-subtitle">
+                    PDF, JPG, PNG, WEBP, GIF
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,.pdf"
+                    multiple
+                    onChange={(event) => {
+                      handleTransactionDocumentChange(event.target.files);
+                      event.currentTarget.value = "";
+                    }}
+                    disabled={
+                      isUploadingAttachment ||
+                      isReadingSlip ||
+                      getAttachmentSlotCount() >= 5
+                    }
+                    hidden
+                  />
+                </label>
+              </div>
+
+              {isReadingSlip && (
+                <div className="drive-hint slip-reading-status">
+                  🔎 กำลังอ่านข้อมูลจากสลิป...
+                </div>
+              )}
+
+              {slipError && (
+                <div className="error-msg show">{slipError}</div>
+              )}
+
+              {transactionSlipFile && (
+                <div className="transaction-file-row transaction-slip-file-row">
+                  <div className="transaction-file-main">
+                    <span className="transaction-file-name">
+                      🧾 {transactionSlipFile.name}
+                    </span>
+
+                    {transactionSlipData && (
+                      <div className="transaction-slip-data-grid">
+                        <span>
+                          <strong>ธนาคาร:</strong>{" "}
+                          {transactionSlipData.bankName || "ไม่พบข้อมูล"}
+                        </span>
+                        <span>
+                          <strong>ประเภท:</strong>{" "}
+                          {transactionSlipData.transactionType === "income"
+                            ? "เงินเข้า"
+                            : transactionSlipData.transactionType === "expense"
+                              ? "เงินออก"
+                              : "ไม่ระบุ"}
+                        </span>
+                        <span>
+                          <strong>ผู้โอน:</strong>{" "}
+                          {transactionSlipData.payerName || "ไม่พบข้อมูล"}
+                        </span>
+                        <span>
+                          <strong>ผู้รับ:</strong>{" "}
+                          {transactionSlipData.payeeName || "ไม่พบข้อมูล"}
+                        </span>
+                        <span>
+                          <strong>วันที่:</strong>{" "}
+                          {transactionSlipData.transferDate || "ไม่พบข้อมูล"}
+                        </span>
+                        <span>
+                          <strong>เวลา:</strong>{" "}
+                          {transactionSlipData.transferTime || "ไม่พบข้อมูล"}
+                        </span>
+                        <span>
+                          <strong>จำนวนเงิน:</strong>{" "}
+                          {typeof transactionSlipData.amount === "number"
+                            ? `฿${formatMoney(transactionSlipData.amount)}`
+                            : "ไม่พบข้อมูล"}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-sm"
+                    onClick={removeTransactionSlip}
+                    disabled={isUploadingAttachment}
+                  >
+                    ลบสลิป
+                  </button>
+                </div>
+              )}
+
+              {transactionAttachments.length > 0 && (
+                <div className="transaction-selected-list">
+                  {transactionAttachments.map((file, index) => (
+                    <div
+                      key={`${file.name}-${file.lastModified}-${index}`}
+                      className="transaction-file-row"
+                    >
+                      <span className="transaction-file-name">
+                        📄 {file.name}
+                      </span>
+
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => removeNewTransactionAttachment(index)}
+                        disabled={isUploadingAttachment}
+                      >
+                        ลบ
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {transactionExistingAttachments.length > 0 && (
+                <div className="transaction-existing-list">
+                  {transactionExistingAttachments.map((attachment) => (
+                    <div
+                      key={attachment.id}
+                      className="transaction-file-row transaction-file-existing"
+                    >
+                      <span className="transaction-file-name">
+                        {attachment.category === "slip"
+                          ? "🧾"
+                          : isImageAttachment(attachment)
+                            ? "🖼️"
+                            : "📄"}{" "}
+                        {attachment.name}
+                      </span>
+
+                      {isImageAttachment(attachment) && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm"
+                          onClick={() => setPreviewAttachment(attachment)}
+                        >
+                          ดูตัวอย่าง
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {getAttachmentSlotCount() === 0 && (
+                <span className="transaction-file-hint">
+                  แนบได้สูงสุด 5 ไฟล์ต่อรายการ • สลิป 1 ไฟล์ + เอกสารหลายไฟล์ • ไฟล์ละไม่เกิน 4 MB
+                </span>
+              )}
+
+              {getAttachmentSlotCount() >= 5 && (
+                <span className="transaction-file-hint">
+                  ✓ แนบครบ 5 ไฟล์แล้ว
+                </span>
+              )}
+            </div>
+
+            {isUploadingAttachment && (
+              <div className="drive-hint">
+                ⏳ กำลังอัปโหลดไฟล์ {attachmentUploadProgress + 1} /{" "}
+                {(
+                  transactionAttachments.length +
+                  (transactionSlipFile ? 1 : 0)
+                )} ไป Google Drive...
+              </div>
+            )}
+
+            {attachmentError && (
+              <div className="error-msg show">{attachmentError}</div>
+            )}
             <div className="form-actions">
               <button
                 type="button"
@@ -1801,6 +2633,81 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
         </div>
       )}
 
+      {isSchedulePreviewOpen && (
+        <div
+          className="slip-viewer-overlay open"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setIsSchedulePreviewOpen(false);
+            }
+          }}
+        >
+          <div
+            className="slip-viewer-content"
+            style={{
+              maxWidth: "96vw",
+              maxHeight: "96vh",
+              overflow: "auto",
+              padding: "8px",
+              borderRadius: "16px",
+            }}
+          >
+            <button
+              type="button"
+              className="slip-close schedule-preview-close"
+              onClick={() => setIsSchedulePreviewOpen(false)}
+              aria-label="ปิดตัวอย่างตารางงาน"
+            >
+              ✕
+            </button>
+
+            <img
+              src={getScheduleImageUrl(selectedEvent?.scheduleUrl ?? "")}
+              alt="Schedule preview"
+              style={{
+                maxWidth: "92vw",
+                maxHeight: "92vh",
+                width: "auto",
+                height: "auto",
+                cursor: "zoom-out",
+              }}
+              onClick={() => setIsSchedulePreviewOpen(false)}
+            />
+          </div>
+        </div>
+      )}
+
+      {previewAttachment && isImageAttachment(previewAttachment) && (
+        <div
+          className="slip-viewer-overlay open transaction-image-preview-overlay"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setPreviewAttachment(null);
+            }
+          }}
+        >
+          <div className="transaction-image-preview">
+            <button
+              type="button"
+              className="slip-close transaction-preview-close"
+              onClick={() => setPreviewAttachment(null)}
+              aria-label="ปิดตัวอย่างรูป"
+            >
+              ✕
+            </button>
+
+            <img
+              src={getAttachmentImagePreviewUrl(previewAttachment)}
+              alt={previewAttachment.name}
+            />
+
+            <div className="transaction-preview-caption">
+              {previewAttachment.name}
+            </div>
+          </div>
+        </div>
+      )}
+
       {isQrModalOpen && (
         <div
           className="modal-overlay open"
@@ -1869,6 +2776,14 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
                 💾 บันทึก
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {toastMessage && (
+        <div id="toast-container">
+          <div className="toast toast-success">
+            ✓ {toastMessage}
           </div>
         </div>
       )}
