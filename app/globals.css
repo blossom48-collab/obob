@@ -43,34 +43,58 @@ body {
   position: relative;
 }
 
-/* Background is tied to the document, not the viewport.
-   The image is centered and kept at roughly the same width as the content. */
+/* Desktop background layer: it moves with the document until its bottom
+   reaches the viewport bottom, then remains there while content keeps scrolling. */
 body::before {
   content: "";
-  position: absolute;
-  top: 0;
-  left: 50%;
+  display: none;
+  position: fixed;
+  inset: 0;
   z-index: 0;
   pointer-events: none;
-
-  /* background.png is 1080 × 1440, so keep the background box at 3:4.
-     This makes the document background end exactly at the bottom of the image
-     instead of extending the image area to the full page height. */
-  width: min(1100px, calc(100vw - 48px));
-  aspect-ratio: 3 / 4;
-  transform: translateX(-50%);
-
   background-image:
     linear-gradient(180deg,
       rgba(3, 7, 18, 0.44) 0%,
       rgba(3, 7, 18, 0.66) 52%,
       rgba(3, 7, 18, 0.86) 100%),
     url("/background.png");
+  background-position: center center, center center;
+  background-repeat: no-repeat, no-repeat;
+  background-size: 100% 100%, auto 86vh;
+}
 
+.page-background-stage {
+  position: relative;
+  min-height: 100vh;
+}
+
+.page-background-sticky {
+  position: sticky;
+  top: min(0px, calc(100vh - var(--desktop-bg-height, 100vh)));
+  height: var(--desktop-bg-height, 100vh);
+  margin-bottom: calc(-1 * var(--desktop-bg-height, 100vh));
+  z-index: 0;
+  pointer-events: none;
+}
+
+.page-background-image {
+  width: var(--desktop-bg-width, min(1100px, calc(100vw - 48px)));
+  height: var(--desktop-bg-height, 100vh);
+  margin: 0 auto;
+  background-image:
+    linear-gradient(180deg,
+      rgba(3, 7, 18, 0.44) 0%,
+      rgba(3, 7, 18, 0.66) 52%,
+      rgba(3, 7, 18, 0.86) 100%),
+    url("/background.png");
   background-position: center top, center top;
   background-repeat: no-repeat, no-repeat;
   background-size: 100% 100%, 100% 100%;
-  background-color: transparent;
+}
+
+.page-content-layer {
+  position: relative;
+  z-index: 1;
 }
 
 a {
@@ -1483,7 +1507,7 @@ hr {
   }
 }
 
-/* ── QR DONATION SECTION ── */
+/* ── DONATION SECTION ── */
 .donate-section {
   max-width: 1100px;
   margin: 0 auto 72px;
@@ -1526,64 +1550,8 @@ hr {
   pointer-events: none;
 }
 
-.donate-qr-wrap {
-  flex-shrink: 0;
-  position: relative;
-}
-
-.donate-qr-frame {
-  width: 180px;
-  height: 180px;
-  border-radius: var(--radius-lg);
-  border: 2px solid rgba(251, 191, 36, .35);
-  padding: 10px;
-  background: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 0 30px rgba(251, 191, 36, .15);
-  position: relative;
-}
-
-.donate-qr-frame img {
+.donate-text-full {
   width: 100%;
-  height: 100%;
-  object-fit: contain;
-  border-radius: 8px;
-  display: block;
-}
-
-.donate-qr-placeholder {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: #94a3b8;
-  font-size: .75rem;
-  text-align: center;
-}
-
-.donate-qr-placeholder .qr-icon {
-  font-size: 2.5rem;
-}
-
-.donate-qr-badge {
-  position: absolute;
-  bottom: -12px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: linear-gradient(135deg, #f59e0b, #d97706);
-  color: #fff;
-  font-size: .7rem;
-  font-weight: 700;
-  padding: 3px 14px;
-  border-radius: 20px;
-  white-space: nowrap;
-  letter-spacing: .5px;
-  box-shadow: 0 4px 12px rgba(245, 158, 11, .4);
 }
 
 .donate-text {
@@ -1668,10 +1636,6 @@ hr {
   transform: translateY(0);
 }
 
-.donate-method-save {
-  color: var(--gold);
-}
-
 .donate-method-copy {
   color: var(--accent);
   background: rgba(96, 165, 250, .09);
@@ -1683,16 +1647,6 @@ hr {
   border-color: rgba(96, 165, 250, .38);
 }
 
-.donate-admin-btn {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  display: none;
-}
-
-.donate-admin-btn.show {
-  display: block;
-}
 
 @media(max-width:700px) {
   .donate-card {
@@ -1710,10 +1664,6 @@ hr {
     justify-content: center;
   }
 
-  .donate-qr-frame {
-    width: 160px;
-    height: 160px;
-  }
 }
 
 .event-media-grid {
@@ -2071,8 +2021,13 @@ hr {
 
 @media (max-width: 768px) {
 
+  .page-background-sticky {
+    display: none;
+  }
+
   /* Mobile: keep the background fixed while the content scrolls. */
   body::before {
+    display: block;
     position: fixed;
     inset: 0;
     width: auto;
@@ -2231,4 +2186,115 @@ hr {
   .transaction-upload-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* ── DEDICATED LATEST EVENT PROMO ── */
+.latest-event-section {
+  margin-bottom: 36px;
+}
+
+.latest-event-card {
+  width: 100%;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-xl);
+  background: rgba(10, 18, 36, 0.42);
+  color: var(--text-1);
+  box-shadow:
+    0 18px 55px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+  text-align: left;
+}
+
+.latest-event-image-only {
+  display: block;
+}
+
+.latest-event-upload-btn {
+  cursor: pointer;
+}
+
+.latest-event-image-wrap {
+  width: 100%;
+  background: rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+}
+
+.latest-event-image {
+  width: 100%;
+  height: auto;
+  display: block;
+  object-fit: contain;
+  background: transparent;
+}
+
+.latest-event-loading,
+.latest-event-empty {
+  min-height: 180px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 28px;
+  color: var(--text-3);
+  font-size: 0.88rem;
+  text-align: center;
+  cursor: default;
+}
+
+.latest-event-icon {
+  font-size: 1.5rem;
+}
+
+.latest-event-info {
+  display: none !important;
+}
+
+@media (max-width: 768px) {
+  .latest-event-card {
+    min-height: 0;
+  }
+
+  .latest-event-image-wrap {
+    width: 100%;
+  }
+
+  .latest-event-image {
+    width: 100%;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    object-fit: contain;
+  }
+
+  .latest-event-info {
+    display: none !important;
+  }
+}
+
+.donate-method-upload {
+  color: var(--gold);
+  background: rgba(251, 191, 36, .10);
+  border-color: rgba(251, 191, 36, .25);
+}
+
+.donate-method-upload:hover {
+  background: rgba(251, 191, 36, .18);
+  border-color: rgba(251, 191, 36, .42);
+}
+
+.donate-method-upload.is-loading {
+  opacity: .65;
+  cursor: wait;
+  transform: none !important;
+}
+
+.donate-upload-hint {
+  margin-top: 9px;
+  color: var(--text-3);
+  font-size: .72rem;
 }
