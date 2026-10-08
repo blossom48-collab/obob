@@ -1050,11 +1050,8 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
         (!!ownName && payee.toLowerCase().includes(ownName)) ||
         (!!ownAccount && payeeAccount.endsWith(ownAccount));
 
-      // เริ่มจากประเภทที่ OCR อ่านมา แล้วใช้ชื่อ/เลขบัญชีของเรา
-      // เพื่อยืนยันและ override เมื่อระบุฝั่งเงินเข้า/เงินออกได้ชัดเจน
       let detectedType: "income" | "expense" =
-        parsed?.transactionType === "income" ||
-          parsed?.transactionType === "expense"
+        parsed?.transactionType === "income" || parsed?.transactionType === "expense"
           ? parsed.transactionType
           : transactionType;
 
@@ -1066,19 +1063,13 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
 
       setTransactionType(detectedType);
 
-      // รายละเอียดรายการใช้ชื่อ "คู่รายการ" ไม่ใช่ชื่อเจ้าของบัญชีเรา
-      // เงินออก: โอนไปยัง → ชื่อผู้รับ
-      // เงินเข้า: รับเงินจาก → ชื่อผู้โอน
-      // ถ้าเงินเข้าไม่มีชื่อผู้โอน ให้ใช้ชื่อธนาคารจากสลิปแทน
       if (detectedType === "expense") {
         const target = payee;
-
         if (target) {
           setTransactionDesc(`โอนไปยัง → ${target}`);
         }
       } else if (detectedType === "income") {
         const source = payer || parsed?.bankName?.trim() || "";
-
         if (source) {
           setTransactionDesc(`รับเงินจาก → ${source}`);
         }
@@ -1157,11 +1148,20 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       })
       : file;
 
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      throw new Error("กรุณาเข้าสู่ระบบ Admin ก่อนอัปโหลดไฟล์");
+    }
+
     const formData = new FormData();
     formData.append("file", uploadFile);
 
     const response = await fetch("/api/google/upload", {
       method: "POST",
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+      },
       body: formData,
     });
 
@@ -1533,12 +1533,21 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
     setLatestEventImageError("");
 
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        throw new Error("กรุณาเข้าสู่ระบบ Admin ก่อนอัปโหลดรูป");
+      }
+
       const formData = new FormData();
       formData.append("file", file);
       formData.append("uploadType", "event-promo");
 
       const response = await fetch("/api/google/upload", {
         method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
         body: formData,
       });
 
