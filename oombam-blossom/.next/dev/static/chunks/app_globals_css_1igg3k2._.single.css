@@ -1468,6 +1468,13 @@ hr {
   padding: 0 24px;
 }
 
+.donate-layout {
+  grid-template-columns: minmax(0, 1.65fr) minmax(300px, .85fr);
+  align-items: stretch;
+  gap: 20px;
+  display: grid;
+}
+
 .donate-card {
   -webkit-backdrop-filter: blur(22px) saturate(140%);
   border-radius: var(--radius-xl);
@@ -1598,7 +1605,147 @@ hr {
   border-color: #60a5fa61;
 }
 
+.social-card {
+  border-radius: var(--radius-xl);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  background: #0a122457;
+  border: 1px solid #ffffff24;
+  padding: 30px 26px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 24px 60px #00000038, inset 0 1px #ffffff12;
+}
+
+.social-card:before {
+  content: "";
+  pointer-events: none;
+  background: radial-gradient(circle at 100% 0, #60a5fa1a, #0000 38%), linear-gradient(145deg, #ffffff06, #0000 55%);
+  position: absolute;
+  inset: 0;
+}
+
+.social-card-eyebrow, .social-card-title, .social-card-desc, .social-list {
+  position: relative;
+}
+
+.social-card-eyebrow {
+  letter-spacing: 1.8px;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 8px;
+  font-size: .72rem;
+  font-weight: 800;
+}
+
+.social-card-title {
+  margin-bottom: 8px;
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.social-card-desc {
+  color: var(--text-2);
+  margin-bottom: 18px;
+  font-size: .78rem;
+  line-height: 1.65;
+}
+
+.social-list {
+  gap: 9px;
+  display: grid;
+}
+
+.social-item {
+  min-width: 0;
+  color: inherit;
+  background: #ffffff09;
+  border: 1px solid #ffffff13;
+  border-radius: 14px;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px;
+  text-decoration: none;
+  transition: transform .2s, background .2s, border-color .2s;
+  display: flex;
+}
+
+.social-item:hover {
+  background: #fff1;
+  border-color: #ffffff24;
+  transform: translateY(-2px);
+}
+
+.social-item.is-empty {
+  cursor: default;
+  opacity: .72;
+}
+
+.social-item.is-empty:hover {
+  background: #ffffff09;
+  border-color: #ffffff13;
+  transform: none;
+}
+
+.social-icon {
+  color: #fff;
+  background: #ffffff12;
+  border-radius: 11px;
+  flex: 0 0 36px;
+  justify-content: center;
+  align-items: center;
+  width: 36px;
+  height: 36px;
+  font-size: .95rem;
+  font-weight: 800;
+  display: inline-flex;
+}
+
+.social-icon-instagram {
+  font-size: 1.15rem;
+}
+
+.social-icon-facebook {
+  font-family: Arial, sans-serif;
+  font-size: 1.15rem;
+}
+
+.social-icon-tiktok {
+  font-size: 1.2rem;
+}
+
+.social-content {
+  flex-direction: column;
+  flex: 1;
+  gap: 1px;
+  min-width: 0;
+  display: flex;
+}
+
+.social-name {
+  font-size: .78rem;
+  font-weight: 750;
+}
+
+.social-handle {
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: .7rem;
+  overflow: hidden;
+}
+
+.social-arrow {
+  color: var(--text-3);
+  font-size: .85rem;
+}
+
 @media (max-width: 700px) {
+  .donate-layout {
+    grid-template-columns: 1fr;
+  }
+
   .donate-card {
     text-align: center;
     flex-direction: column;

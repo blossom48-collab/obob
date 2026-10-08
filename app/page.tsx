@@ -1,3 +1,9 @@
+/* =========================================================
+   OomBam Blossom FC
+   Next.js + Supabase
+   Supabase only
+   ========================================================= */
+
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -92,6 +98,13 @@ type DriveImage = {
 
 const DEFAULT_SCHEDULE_URL =
   "https://lh3.googleusercontent.com/d/1hHGB04z7b-y1IuuBrl3X2CkLUpM1BAAX=s0";
+
+const SOCIAL_MEDIA_LINKS = {
+  x: "https://x.com/oombamblossomfc",
+  instagram: "https://www.instagram.com/oombamblossomfc/",
+  facebook: "https://www.facebook.com/oombamblossomfc/",
+  tiktok: "https://www.tiktok.com/@oombamblossomfc",
+};
 
 function formatMoney(value: number) {
   return value.toLocaleString("th-TH", {
@@ -2352,96 +2365,168 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
                 </section>
 
                 <section className="donate-section">
-                  <div className="donate-card">
-                    <div className="donate-text donate-text-full">
-                      <div className="donate-eyebrow">ร่วมสนับสนุน</div>
+                  <div className="donate-layout">
+                    <div className="donate-card">
+                      <div className="donate-text donate-text-full">
+                        <div className="donate-eyebrow">ร่วมสนับสนุน</div>
 
-                      <div className="donate-title">
-                        ร่วมเป็นส่วนหนึ่งของ
-                        <br />
-                        <span>OomBam Blossom FC</span>
-                      </div>
-
-                      <p className="donate-desc">
-                        ทุกการสนับสนุนของคุณจะช่วยให้โปรเจคนี้เดินหน้าต่อไปได้
-                        โอนได้ตามข้อมูลด้านล่าง แล้วอัปโหลดสลิปได้เลย
-                        ขอบคุณทุกแรงใจที่มอบให้ 🌸
-                      </p>
-
-                      <div
-                        style={{
-                          margin: "18px 0 20px",
-                          padding: "14px 16px",
-                          borderRadius: "14px",
-                          background: "rgba(255, 255, 255, 0.04)",
-                          border: "1px solid var(--border)",
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: ".78rem",
-                            color: "var(--text-3)",
-                            marginBottom: "8px",
-                          }}
-                        >
-                          ข้อมูลสำหรับโอนเงิน
+                        <div className="donate-title">
+                          ร่วมเป็นส่วนหนึ่งของ
+                          <br />
+                          <span>OomBam Blossom FC</span>
                         </div>
+
+                        <p className="donate-desc">
+                          ทุกการสนับสนุนของคุณจะช่วยให้โปรเจคนี้เดินหน้าต่อไปได้
+                          โอนได้ตามข้อมูลด้านล่าง แล้วอัปโหลดสลิปได้เลย
+                          ขอบคุณทุกแรงใจที่มอบให้ 🌸
+                        </p>
 
                         <div
                           style={{
-                            display: "grid",
-                            gap: "5px",
-                            fontSize: ".88rem",
+                            margin: "18px 0 20px",
+                            padding: "14px 16px",
+                            borderRadius: "14px",
+                            background: "rgba(255, 255, 255, 0.04)",
+                            border: "1px solid var(--border)",
                           }}
                         >
-                          <div>
-                            <span style={{ color: "var(--text-3)" }}>ธนาคาร: </span>
-                            <strong>{bankName || "—"}</strong>
-                          </div>
-
-                          <div>
-                            <span style={{ color: "var(--text-3)" }}>เลขที่บัญชี: </span>
-                            <strong>{bankAccountNumber || "—"}</strong>
-                          </div>
-
-                          <div>
-                            <span style={{ color: "var(--text-3)" }}>ชื่อบัญชี: </span>
-                            <strong>{bankAccountName || "—"}</strong>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="donate-methods">
-                        <label
-                          className={`donate-method donate-method-button donate-method-upload${isUploadingPublicSlip ? " is-loading" : ""}`}
-                        >
-                          <input
-                            type="file"
-                            accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
-                            disabled={isUploadingPublicSlip}
-                            onChange={(event) => {
-                              const file = event.target.files?.[0] ?? null;
-                              void handlePublicSlipUpload(file);
-                              event.currentTarget.value = "";
+                          <div
+                            style={{
+                              fontSize: ".78rem",
+                              color: "var(--text-3)",
+                              marginBottom: "8px",
                             }}
-                            hidden
-                          />
-                          {isUploadingPublicSlip ? "⏳ กำลังอัปโหลด..." : "📎 อัปโหลดสลิป"}
-                        </label>
+                          >
+                            ข้อมูลสำหรับโอนเงิน
+                          </div>
 
-                        <button
-                          type="button"
-                          className="donate-method donate-method-button donate-method-copy"
-                          onClick={() => void copyBankAccount()}
-                        >
-                          📋 คัดลอกหมายเลขบัญชี
-                        </button>
-                      </div>
+                          <div
+                            style={{
+                              display: "grid",
+                              gap: "5px",
+                              fontSize: ".88rem",
+                            }}
+                          >
+                            <div>
+                              <span style={{ color: "var(--text-3)" }}>ธนาคาร: </span>
+                              <strong>{bankName || "—"}</strong>
+                            </div>
 
-                      <div className="donate-upload-hint">
-                        รองรับ JPG, PNG, WEBP, GIF หรือ PDF ขนาดไม่เกิน 4 MB
+                            <div>
+                              <span style={{ color: "var(--text-3)" }}>เลขที่บัญชี: </span>
+                              <strong>{bankAccountNumber || "—"}</strong>
+                            </div>
+
+                            <div>
+                              <span style={{ color: "var(--text-3)" }}>ชื่อบัญชี: </span>
+                              <strong>{bankAccountName || "—"}</strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="donate-methods">
+                          <label
+                            className={`donate-method donate-method-button donate-method-upload${isUploadingPublicSlip ? " is-loading" : ""}`}
+                          >
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                              disabled={isUploadingPublicSlip}
+                              onChange={(event) => {
+                                const file = event.target.files?.[0] ?? null;
+                                void handlePublicSlipUpload(file);
+                                event.currentTarget.value = "";
+                              }}
+                              hidden
+                            />
+                            {isUploadingPublicSlip ? "⏳ กำลังอัปโหลด..." : "📎 อัปโหลดสลิป"}
+                          </label>
+
+                          <button
+                            type="button"
+                            className="donate-method donate-method-button donate-method-copy"
+                            onClick={() => void copyBankAccount()}
+                          >
+                            📋 คัดลอกหมายเลขบัญชี
+                          </button>
+                        </div>
+
+                        <div className="donate-upload-hint">
+                          รองรับ JPG, PNG, WEBP, GIF หรือ PDF ขนาดไม่เกิน 4 MB
+                        </div>
                       </div>
                     </div>
+
+                    <aside className="social-card">
+                      <div className="social-card-eyebrow">ติดตามเรา</div>
+                      <div className="social-card-title">Social Media</div>
+                      <div className="social-card-desc">
+                        ติดตามข่าวสารและอัปเดตต่าง ๆ ของ OomBam Blossom FC
+                      </div>
+
+                      <div className="social-list">
+                        <a
+                          className="social-item"
+                          href={SOCIAL_MEDIA_LINKS.x}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label="X - OomBam Blossom FC"
+                        >
+                          <span className="social-icon">𝕏</span>
+                          <span className="social-content">
+                            <span className="social-name">X</span>
+                            <span className="social-handle">@oombamblossomfc</span>
+                          </span>
+                          <span className="social-arrow">↗</span>
+                        </a>
+
+                        <a
+                          className="social-item"
+                          href={SOCIAL_MEDIA_LINKS.instagram}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label="Instagram - OomBam Blossom FC"
+                        >
+                          <span className="social-icon social-icon-instagram">◎</span>
+                          <span className="social-content">
+                            <span className="social-name">Instagram</span>
+                            <span className="social-handle">@oombamblossomfc</span>
+                          </span>
+                          <span className="social-arrow">↗</span>
+                        </a>
+
+                        <a
+                          className="social-item"
+                          href={SOCIAL_MEDIA_LINKS.facebook}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label="Facebook - OomBam Blossom FC"
+                        >
+                          <span className="social-icon social-icon-facebook">f</span>
+                          <span className="social-content">
+                            <span className="social-name">Facebook</span>
+                            <span className="social-handle">oombamblossomfc</span>
+                          </span>
+                          <span className="social-arrow">↗</span>
+                        </a>
+
+                        <a
+                          className="social-item"
+                          href={SOCIAL_MEDIA_LINKS.tiktok}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label="TikTok - OomBam Blossom FC"
+                        >
+                          <span className="social-icon social-icon-tiktok">♪</span>
+                          <span className="social-content">
+                            <span className="social-name">TikTok</span>
+                            <span className="social-handle">@oombamblossomfc</span>
+                          </span>
+                          <span className="social-arrow">↗</span>
+                        </a>
+                      </div>
+                    </aside>
                   </div>
                 </section>
               </main>
