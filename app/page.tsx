@@ -93,6 +93,13 @@ type DriveImage = {
 const DEFAULT_SCHEDULE_URL =
   "https://lh3.googleusercontent.com/d/1hHGB04z7b-y1IuuBrl3X2CkLUpM1BAAX=s0";
 
+const SOCIAL_MEDIA_LINKS = {
+  x: "https://x.com/oombamblossomfc",
+  instagram: "https://www.instagram.com/oombamblossomfc/",
+  facebook: "https://www.facebook.com/oombamblossomfc/",
+  tiktok: "https://www.tiktok.com/@oombamblossomfc",
+};
+
 function formatMoney(value: number) {
   return value.toLocaleString("th-TH", {
     minimumFractionDigits: 2,
@@ -112,6 +119,52 @@ function formatDate(date: string) {
     month: "long",
     day: "numeric",
   });
+}
+
+function getTransactionFileExtension(file: File) {
+  const match = file.name.trim().match(/\.[a-zA-Z0-9]{1,8}$/);
+  if (match?.[0]) return match[0].toLowerCase();
+
+  switch (file.type) {
+    case "image/jpeg":
+      return ".jpg";
+    case "image/png":
+      return ".png";
+    case "image/webp":
+      return ".webp";
+    case "image/gif":
+      return ".gif";
+    case "application/pdf":
+      return ".pdf";
+    default:
+      return "";
+  }
+}
+
+function sanitizeFileDate(value: string) {
+  return value.replace(/[^0-9]/g, "").slice(0, 8) || "00000000";
+}
+
+function sanitizeFileTime(value: string) {
+  return value.replace(/[^0-9]/g, "").slice(0, 6).padEnd(6, "0");
+}
+
+function buildTransactionAttachmentName(
+  file: File,
+  category: "slip" | "document",
+  transactionDate: string,
+  transactionTime: string,
+  sequence: number,
+) {
+  const datePart = sanitizeFileDate(transactionDate);
+  const timePart = sanitizeFileTime(transactionTime);
+  const extension = getTransactionFileExtension(file);
+
+  if (category === "slip") {
+    return `SLIP_${datePart}_${timePart}${extension}`;
+  }
+
+  return `DOC_${datePart}_${timePart}_${String(sequence).padStart(2, "0")}${extension}`;
 }
 
 function getDriveFileId(url: string) {
@@ -184,19 +237,6 @@ function getScheduleImageUrl(url: string) {
   const driveId =
     url.match(/\/d\/([\w-]+)/)?.[1] ?? url.match(/[?&]id=([\w-]+)/)?.[1];
 
-  return driveId
-    ? `https://lh3.googleusercontent.com/d/${driveId}=s0`
-    : url;
-}
-
-function getQrImageUrl(url: string) {
-  if (!url.trim()) return "";
-
-  const driveId =
-    url.match(/\/d\/([\w-]+)/)?.[1] ??
-    url.match(/[?&]id=([\w-]+)/)?.[1];
-
-  // ใช้วิธีเดียวกับภาพตารางงานที่แสดงได้อยู่แล้ว
   return driveId
     ? `https://lh3.googleusercontent.com/d/${driveId}=s0`
     : url;
@@ -378,13 +418,11 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
   const [transactionFilter, setTransactionFilter] =
     useState<"" | "income" | "expense">("");
 
-  const [qrUrl, setQrUrl] = useState("");
-  const [qrInput, setQrInput] = useState("");
-  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
-  const [latestEventFolderUrl, setLatestEventFolderUrl] = useState("");
-  const [latestEventFolderInput, setLatestEventFolderInput] = useState("");
-  const [isLatestEventFolderModalOpen, setIsLatestEventFolderModalOpen] =
+  const [isUploadingPublicSlip, setIsUploadingPublicSlip] = useState(false);
+  const [isUploadingLatestEventImage, setIsUploadingLatestEventImage] =
     useState(false);
+  const [latestEventPromoImageName, setLatestEventPromoImageName] =
+    useState("");
   const [bankName, setBankName] = useState("");
   const [bankAccountNumber, setBankAccountNumber] = useState("");
   const [bankAccountName, setBankAccountName] = useState("");
@@ -397,7 +435,6 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
   const [latestEventImage, setLatestEventImage] = useState<DriveImage | null>(null);
   const [latestEventImageSrc, setLatestEventImageSrc] = useState("");
   const [latestEventImageSrcIndex, setLatestEventImageSrcIndex] = useState(0);
-  const [isLoadingLatestEventImage, setIsLoadingLatestEventImage] = useState(false);
   const [latestEventImageError, setLatestEventImageError] = useState("");
 
   const selectedEvent =
@@ -457,99 +494,6 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       cancelled = true;
     };
   }, [selectedEvent?.imageFolderUrl]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadLatestEventImage() {
-      const folderUrl = latestEventFolderUrl.trim();
-
-      setLatestEventImage(null);
-      setLatestEventImageSrc("");
-      setLatestEventImageSrcIndex(0);
-      setLatestEventImageError("");
-
-      if (!folderUrl) {
-        setIsLoadingLatestEventImage(false);
-        return;
-      }
-
-      setIsLoadingLatestEventImage(true);
-
-      try {
-        const normalizedFolderUrl = normalizeDriveFolderUrl(folderUrl);
-
-        const response = await fetch(
-          `/api/drive-images?folder=${encodeURIComponent(normalizedFolderUrl)}`,
-          { cache: "no-store" },
-        );
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(
-            data?.error || "โหลดรูปโปรโมทจาก Google Drive ไม่สำเร็จ",
-          );
-        }
-
-        if (!cancelled) {
-          const images = Array.isArray(data?.images)
-            ? (data.images as DriveImage[])
-            : Array.isArray(data?.files)
-              ? (data.files as DriveImage[])
-              : [];
-
-          // Prefer Drive timestamps when the API exposes them.
-          // Otherwise, preserve the API's returned order.
-          const sortedImages =
-            images.some((image) => image.modifiedTime || image.createdTime)
-              ? [...images].sort((a, b) => {
-                const aTime = a.modifiedTime || a.createdTime || "";
-                const bTime = b.modifiedTime || b.createdTime || "";
-                return bTime.localeCompare(aTime);
-              })
-              : images;
-
-          const firstImage = sortedImages[0] ?? null;
-
-          if (!firstImage) {
-            throw new Error(
-              "ไม่พบไฟล์รูปในโฟลเดอร์นี้ หรือโฟลเดอร์ยังไม่ได้เปิดสิทธิ์ให้ระบบอ่านไฟล์",
-            );
-          }
-
-          const candidates = getLatestEventImageCandidates(firstImage);
-          if (candidates.length === 0) {
-            throw new Error("พบไฟล์ใน Google Drive แต่ไม่พบ URL สำหรับแสดงรูป");
-          }
-
-          setLatestEventImage(firstImage);
-          setLatestEventImageSrc(candidates[0]);
-          setLatestEventImageSrcIndex(0);
-        }
-      } catch (error) {
-        console.error("โหลดรูปโปรโมท Event ล่าสุดไม่สำเร็จ:", error);
-
-        if (!cancelled) {
-          setLatestEventImageError(
-            error instanceof Error
-              ? error.message
-              : "โหลดรูปโปรโมทจาก Google Drive ไม่สำเร็จ",
-          );
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoadingLatestEventImage(false);
-        }
-      }
-    }
-
-    loadLatestEventImage();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [latestEventFolderUrl]);
 
   const globalStats = useMemo(() => {
     const income = transactions
@@ -635,8 +579,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
         .from("settings")
         .select("key, value, updated_at")
         .in("key", [
-          "qr_url",
-          "latest_event_folder_url",
+          "latest_event_promo_image",
           "bank_name",
           "bank_account_number",
           "bank_account_name",
@@ -663,8 +606,10 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
 
     if (settingsError) {
       console.error("โหลด Settings ไม่สำเร็จ:", settingsError);
-      setQrUrl("");
-      setLatestEventFolderUrl("");
+      setLatestEventImage(null);
+      setLatestEventImageSrc("");
+      setLatestEventImageSrcIndex(0);
+      setLatestEventPromoImageName("");
       setBankName("");
       setBankAccountNumber("");
       setBankAccountName("");
@@ -676,8 +621,25 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
         return result;
       }, {});
 
-      setQrUrl(settings.qr_url ?? "");
-      setLatestEventFolderUrl(settings.latest_event_folder_url ?? "");
+
+      const savedLatestPromo = settings.latest_event_promo_image ?? "";
+      if (savedLatestPromo) {
+        try {
+          const parsedPromo = JSON.parse(savedLatestPromo) as DriveImage;
+          if (parsedPromo?.id) {
+            setLatestEventImage(parsedPromo);
+            setLatestEventImageSrc(
+              parsedPromo.imageUrl ||
+              `https://lh3.googleusercontent.com/d/${parsedPromo.id}=w1600`,
+            );
+            setLatestEventImageSrcIndex(0);
+            setLatestEventPromoImageName(parsedPromo.name ?? "");
+          }
+        } catch (error) {
+          console.warn("อ่านข้อมูลรูป Event ล่าสุดจาก Settings ไม่สำเร็จ:", error);
+        }
+      }
+
       setBankName(settings.bank_name ?? "");
       setBankAccountNumber(settings.bank_account_number ?? "");
       setBankAccountName(settings.bank_account_name ?? "");
@@ -686,6 +648,30 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
     setIsAdmin(!!sessionData.session);
     setIsReady(true);
   }
+
+  useEffect(() => {
+    const root = document.documentElement;
+
+    const updateDesktopBackgroundMetrics = () => {
+      if (window.innerWidth <= 768) {
+        root.style.removeProperty("--desktop-bg-height");
+        return;
+      }
+
+      const width = Math.min(1100, Math.max(0, window.innerWidth - 48));
+      const height = width * (4 / 3);
+
+      root.style.setProperty("--desktop-bg-width", `${width}px`);
+      root.style.setProperty("--desktop-bg-height", `${height}px`);
+    };
+
+    updateDesktopBackgroundMetrics();
+    window.addEventListener("resize", updateDesktopBackgroundMetrics);
+
+    return () => {
+      window.removeEventListener("resize", updateDesktopBackgroundMetrics);
+    };
+  }, []);
 
   useEffect(() => {
     void loadData();
@@ -1064,16 +1050,13 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
         (!!ownName && payee.toLowerCase().includes(ownName)) ||
         (!!ownAccount && payeeAccount.endsWith(ownAccount));
 
-      // ใช้ประเภทจาก OCR ก่อน และให้การเทียบชื่อ/เลขบัญชีเจ้าของบัญชี
-      // เป็นตัวตัดสินขั้นสุดท้ายเมื่อข้อมูลบนสลิปชัดเจนกว่า
-      let detectedType: "income" | "expense" = transactionType;
-
-      if (
+      // เริ่มจากประเภทที่ OCR อ่านมา แล้วใช้ชื่อ/เลขบัญชีของเรา
+      // เพื่อยืนยันและ override เมื่อระบุฝั่งเงินเข้า/เงินออกได้ชัดเจน
+      let detectedType: "income" | "expense" =
         parsed?.transactionType === "income" ||
-        parsed?.transactionType === "expense"
-      ) {
-        detectedType = parsed.transactionType;
-      }
+          parsed?.transactionType === "expense"
+          ? parsed.transactionType
+          : transactionType;
 
       if (payeeMatchesOwn && !payerMatchesOwn) {
         detectedType = "income";
@@ -1083,10 +1066,10 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
 
       setTransactionType(detectedType);
 
-      // รายละเอียดรายการ:
-      // เงินออก  -> โอนไปยัง → [payeeName]
-      // เงินเข้า -> รับเงินจาก → [payerName]
-      // ถ้าเงินเข้าไม่มี payerName ให้ใช้ชื่อธนาคารจากสลิปแทน
+      // รายละเอียดรายการใช้ชื่อ "คู่รายการ" ไม่ใช่ชื่อเจ้าของบัญชีเรา
+      // เงินออก: โอนไปยัง → ชื่อผู้รับ
+      // เงินเข้า: รับเงินจาก → ชื่อผู้โอน
+      // ถ้าเงินเข้าไม่มีชื่อผู้โอน ให้ใช้ชื่อธนาคารจากสลิปแทน
       if (detectedType === "expense") {
         const target = payee;
 
@@ -1166,9 +1149,16 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
     setAttachmentError("");
   }
 
-  async function uploadTransactionAttachment(file: File) {
+  async function uploadTransactionAttachment(file: File, uploadName?: string) {
+    const uploadFile = uploadName
+      ? new File([file], uploadName, {
+        type: file.type,
+        lastModified: file.lastModified,
+      })
+      : file;
+
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", uploadFile);
 
     const response = await fetch("/api/google/upload", {
       method: "POST",
@@ -1242,6 +1232,11 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       filesToUpload.push({ file, category: "document" });
     }
 
+    let documentSequence =
+      transactionExistingAttachments.filter(
+        (attachment) => attachment.category === "document",
+      ).length + 1;
+
     if (filesToUpload.length > 0) {
       setIsUploadingAttachment(true);
       setAttachmentUploadProgress(0);
@@ -1249,7 +1244,19 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       try {
         for (let index = 0; index < filesToUpload.length; index += 1) {
           const { file, category } = filesToUpload[index];
-          const uploadedFile = await uploadTransactionAttachment(file);
+          const uploadName = buildTransactionAttachmentName(
+            file,
+            category,
+            transactionDate,
+            transactionTime,
+            documentSequence,
+          );
+
+          const uploadedFile = await uploadTransactionAttachment(file, uploadName);
+
+          if (category === "document") {
+            documentSequence += 1;
+          }
 
           finalAttachments.push({
             id: uploadedFile.id,
@@ -1402,52 +1409,61 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
     window.setTimeout(() => setToastMessage(""), 2200);
   }
 
-  function saveQrImage() {
-    const imageUrl = qrUrl ? getQrImageUrl(qrUrl) : "";
 
-    if (!imageUrl) {
-      showToast("ยังไม่มี QR Code ให้บันทึก");
+  async function handlePublicSlipUpload(file: File | null) {
+    if (!file) return;
+
+    const allowedTypes = new Set([
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "image/gif",
+    ]);
+
+    if (!allowedTypes.has(file.type)) {
+      alert("รองรับสลิปเป็น JPG, PNG, WEBP หรือ GIF เท่านั้น");
       return;
     }
 
-    const driveFileId = getDriveFileId(qrUrl);
-
-    if (driveFileId) {
-      // ใช้ route ของเว็บเราเองเพื่อให้ LINE/Android WebView
-      // ได้รับไฟล์พร้อม Content-Disposition: attachment โดยตรง
-      const downloadUrl = `/api/qr-download?fileId=${encodeURIComponent(
-        driveFileId,
-      )}`;
-      window.location.assign(downloadUrl);
+    if (file.size === 0) {
+      alert("ไฟล์ว่างเปล่า");
       return;
     }
 
-    // กรณี QR ไม่ได้มาจาก Google Drive ให้ใช้วิธีดาวน์โหลดปกติ
-    void (async () => {
-      try {
-        const response = await fetch(imageUrl, { mode: "cors" });
+    if (file.size > 4 * 1024 * 1024) {
+      alert("ไฟล์สลิปต้องมีขนาดไม่เกิน 4 MB");
+      return;
+    }
 
-        if (!response.ok) {
-          throw new Error("ไม่สามารถดาวน์โหลด QR Code ได้");
-        }
+    setIsUploadingPublicSlip(true);
 
-        const blob = await response.blob();
-        const blobUrl = URL.createObjectURL(blob);
-        const link = document.createElement("a");
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("uploadType", "public-slip");
 
-        link.href = blobUrl;
-        link.download = "oombam-blossom-fc-qr.png";
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
+      const response = await fetch("/api/google/upload", {
+        method: "POST",
+        body: formData,
+      });
 
-        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-        showToast("บันทึก QR Code แล้ว");
-      } catch (error) {
-        console.error("บันทึก QR ไม่สำเร็จ:", error);
-        window.location.assign(imageUrl);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.error || "อัปโหลดสลิปไม่สำเร็จ");
       }
-    })();
+
+      showToast("อัปโหลดสลิปเรียบร้อยแล้ว ขอบคุณครับ 🌸");
+    } catch (error) {
+      console.error("อัปโหลดสลิปไม่สำเร็จ:", error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : "อัปโหลดสลิปไม่สำเร็จ",
+      );
+    } finally {
+      setIsUploadingPublicSlip(false);
+    }
   }
 
   async function copyBankAccount() {
@@ -1480,98 +1496,95 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
     }
   }
 
-  function openLatestEventFolderModal() {
-    if (!isAdmin) {
-      openLoginModal();
-      return;
-    }
-
-    setLatestEventFolderInput(latestEventFolderUrl);
-    setIsLatestEventFolderModalOpen(true);
-  }
-
-  function closeLatestEventFolderModal() {
-    setIsLatestEventFolderModalOpen(false);
-    setLatestEventFolderInput("");
-  }
-
-  async function saveLatestEventFolder() {
-    if (!isAdmin) {
-      openLoginModal();
-      return;
-    }
-
-    const cleanFolderUrl = latestEventFolderInput.trim();
-
-    if (
-      cleanFolderUrl &&
-      !cleanFolderUrl.includes("drive.google.com/drive/")
-    ) {
-      alert("กรุณาใส่ลิงก์โฟลเดอร์ Google Drive");
-      return;
-    }
-
+  async function saveLatestEventPromoSetting(image: DriveImage) {
     const { error } = await supabase.from("settings").upsert(
       {
-        key: "latest_event_folder_url",
-        value: cleanFolderUrl || null,
+        key: "latest_event_promo_image",
+        value: JSON.stringify(image),
         updated_at: new Date().toISOString(),
       },
       { onConflict: "key" },
     );
 
     if (error) {
-      console.error("บันทึกลิงก์โฟลเดอร์ Event ล่าสุดไม่สำเร็จ:", error);
-      alert(
-        `บันทึกลิงก์โฟลเดอร์ Event ล่าสุดไม่สำเร็จ\n${error.message}`,
-      );
-      return;
+      throw new Error(`บันทึกข้อมูลรูป Event ล่าสุดไม่สำเร็จ: ${error.message}`);
     }
-
-    setLatestEventFolderUrl(cleanFolderUrl);
-    closeLatestEventFolderModal();
   }
 
-  function openQrModal() {
+  async function handleLatestEventImageUpload(file: File | null) {
+    if (!file) return;
+
     if (!isAdmin) {
       openLoginModal();
       return;
     }
 
-    setQrInput(qrUrl);
-    setIsQrModalOpen(true);
-  }
-
-  function closeQrModal() {
-    setIsQrModalOpen(false);
-    setQrInput("");
-  }
-
-  async function saveQr() {
-    if (!isAdmin) {
-      openLoginModal();
+    if (!file.type.startsWith("image/")) {
+      alert("ไฟล์ Event ล่าสุดต้องเป็นรูปภาพเท่านั้น");
       return;
     }
 
-    const cleanQrUrl = qrInput.trim();
-
-    const { error } = await supabase.from("settings").upsert(
-      {
-        key: "qr_url",
-        value: cleanQrUrl || null,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "key" },
-    );
-
-    if (error) {
-      console.error("บันทึก QR ไม่สำเร็จ:", error);
-      alert(`บันทึก QR ไม่สำเร็จ\n${error.message}`);
+    if (file.size > 4 * 1024 * 1024) {
+      alert("รูป Event ล่าสุดต้องมีขนาดไม่เกิน 4 MB");
       return;
     }
 
-    setQrUrl(cleanQrUrl);
-    closeQrModal();
+    setIsUploadingLatestEventImage(true);
+    setLatestEventImageError("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("uploadType", "event-promo");
+
+      const response = await fetch("/api/google/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error("ยังไม่ได้เชื่อมต่อ Google Drive กรุณาเชื่อม Google Drive ก่อนอัปโหลดรูป");
+        }
+        throw new Error(data?.error || "อัปโหลดรูป Event ล่าสุดไม่สำเร็จ");
+      }
+
+      const uploaded = data?.file;
+      if (!uploaded?.id) {
+        throw new Error("อัปโหลดสำเร็จแต่ไม่พบข้อมูลไฟล์ที่สร้างขึ้น");
+      }
+
+      const image: DriveImage = {
+        id: String(uploaded.id),
+        name: String(uploaded.name ?? file.name),
+        mimeType: String(uploaded.mimeType ?? file.type),
+        imageUrl:
+          String(uploaded.imageUrl ?? "") ||
+          `https://lh3.googleusercontent.com/d/${uploaded.id}=w1600`,
+        modifiedTime: uploaded.modifiedTime ?? undefined,
+        createdTime: uploaded.createdTime ?? undefined,
+      };
+
+      await saveLatestEventPromoSetting(image);
+
+      setLatestEventImage(image);
+      setLatestEventImageSrc(image.imageUrl);
+      setLatestEventImageSrcIndex(0);
+      setLatestEventPromoImageName(image.name);
+      showToast("อัปโหลดรูป Event ล่าสุดเรียบร้อยแล้ว");
+    } catch (error) {
+      console.error("อัปโหลดรูป Event ล่าสุดไม่สำเร็จ:", error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : "อัปโหลดรูป Event ล่าสุดไม่สำเร็จ";
+      setLatestEventImageError(message);
+      alert(message);
+    } finally {
+      setIsUploadingLatestEventImage(false);
+    }
   }
 
   if (!isReady) {
@@ -1592,7 +1605,13 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
 
   return (
     <>
-      <style jsx global>{`
+      <div className="page-background-stage">
+        <div className="page-background-sticky" aria-hidden="true">
+          <div className="page-background-image" />
+        </div>
+
+        <div className="page-content-layer">
+          <style jsx global>{`
         .bg-orbs {
           display: none !important;
         }
@@ -1707,1636 +1726,1528 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
         }
       `}</style>
 
-      <div className="bg-orbs">
-        <div className="orb orb-1" />
-        <div className="orb orb-2" />
-        <div className="orb orb-3" />
-      </div>
+          <div className="bg-orbs">
+            <div className="orb orb-1" />
+            <div className="orb orb-2" />
+            <div className="orb orb-3" />
+          </div>
 
-      <nav className="navbar">
-        <button
-          type="button"
-          className="nav-brand"
-          onClick={() => router.push("/")}
-        >
-          <svg
-            width="26"
-            height="26"
-            viewBox="0 0 24 24"
-            fill="none"
-            aria-hidden="true"
-          >
-            <path
-              d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
-              stroke="#60a5fa"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-          OomBam Blossom FC
-        </button>
-
-        <div className="nav-right">
-          {isAdmin ? (
-            <>
-              <span className="admin-badge">👤 Admin</span>
-
-              <button
-                type="button"
-                className="btn-nav btn-logout"
-                onClick={() => void doLogout()}
-              >
-                ออกจากระบบ
-              </button>
-            </>
-          ) : (
+          <nav className="navbar">
             <button
               type="button"
-              className="btn-nav btn-login"
-              onClick={openLoginModal}
+              className="nav-brand"
+              onClick={() => router.push("/")}
             >
-              🔐 Admin Login
-            </button>
-          )}
-        </div>
-      </nav>
-
-      <div id="app">
-        {selectedEvent ? (
-          <main className="view active">
-            <div className="detail-hero section">
-              <button
-                type="button"
-                className="back-btn"
-                onClick={() => router.push("/")}
+              <svg
+                width="26"
+                height="26"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
               >
-                ← กลับหน้าหลัก
-              </button>
+                <path
+                  d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"
+                  stroke="#60a5fa"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              OomBam Blossom FC
+            </button>
 
-              <h2>{selectedEvent.name}</h2>
+            <div className="nav-right">
+              {isAdmin ? (
+                <>
+                  <span className="admin-badge">👤 Admin</span>
 
-              {selectedEvent.desc && (
-                <p
-                  style={{
-                    color: "var(--text-2)",
-                    marginTop: "8px",
-                  }}
-                >
-                  {selectedEvent.desc}
-                </p>
-              )}
-
-              <div className="detail-stats">
-                <div className="detail-stat">
-                  <div className="detail-stat-label">เงินเข้า</div>
-                  <div
-                    className="detail-stat-val"
-                    style={{ color: "var(--income)" }}
-                  >
-                    ฿{formatMoney(selectedEventStats.income)}
-                  </div>
-                </div>
-
-                <div style={{ color: "var(--border)" }}>|</div>
-
-                <div className="detail-stat">
-                  <div className="detail-stat-label">เงินออก</div>
-                  <div
-                    className="detail-stat-val"
-                    style={{ color: "var(--expense)" }}
-                  >
-                    ฿{formatMoney(selectedEventStats.expense)}
-                  </div>
-                </div>
-
-                <div style={{ color: "var(--border)" }}>|</div>
-
-                <div className="detail-stat">
-                  <div className="detail-stat-label">ยอดสุทธิ</div>
-                  <div
-                    className="detail-stat-val"
-                    style={{
-                      color:
-                        selectedEventStats.balance >= 0
-                          ? "var(--income)"
-                          : "var(--expense)",
-                    }}
-                  >
-                    {selectedEventStats.balance < 0 ? "-" : ""}฿
-                    {formatMoney(Math.abs(selectedEventStats.balance))}
-                  </div>
-                </div>
-
-                <div style={{ color: "var(--border)" }}>|</div>
-
-                <div className="detail-stat">
-                  <div className="detail-stat-label">จำนวนรายการ</div>
-                  <div
-                    className="detail-stat-val"
-                    style={{ color: "var(--accent)" }}
-                  >
-                    {selectedEventStats.count}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <section className="section">
-              <div className="section-header">
-                <div className="section-title">รายการทั้งหมด</div>
-
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "8px",
-                    flexWrap: "wrap",
-                  }}
-                >
-                  <select
-                    className="form-control"
-                    value={transactionFilter}
-                    onChange={(event) =>
-                      setTransactionFilter(
-                        event.target.value as "" | "income" | "expense",
-                      )
-                    }
-                    style={{
-                      width: "auto",
-                      padding: "8px 14px",
-                      fontSize: ".85rem",
-                    }}
-                  >
-                    <option value="">ทุกประเภท</option>
-                    <option value="income">เงินเข้า</option>
-                    <option value="expense">เงินออก</option>
-                  </select>
-
-                  {isAdmin && (
-                    <button
-                      type="button"
-                      className="btn btn-success"
-                      onClick={openCreateTransactionModal}
-                    >
-                      ➕ เพิ่มรายการ
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {filteredTransactions.length === 0 ? (
-                <div className="empty-state">
-                  <div className="empty-icon">🧾</div>
-                  <p>
-                    ยังไม่มีรายการ
-                    <br />
-                    {transactionFilter
-                      ? "ไม่พบรายการในประเภทนี้"
-                      : "รายการเงินเข้าและเงินออกจะแสดงที่นี่"}
-                  </p>
-                </div>
-              ) : (
-                <div className="tx-list">
-                  {filteredTransactions.map((transaction) => (
-                    <article
-                      key={transaction.id}
-                      className={`tx-card tx-${transaction.type}`}
-                    >
-                      <div className="tx-top">
-                        <div className="tx-info">
-                          <div className="tx-desc">{transaction.desc}</div>
-                          <div className="tx-date">
-                            {formatDate(transaction.date)}
-                            {transaction.time ? ` • ${transaction.time.slice(0, 5)}` : ""}
-                          </div>
-                        </div>
-
-                        <div className="tx-amount">
-                          {transaction.type === "income" ? "+" : "-"}฿
-                          {formatMoney(transaction.amount)}
-                        </div>
-                      </div>
-
-                      <div className="tx-chips">
-                        <span
-                          className={`chip ${transaction.type === "income"
-                            ? "chip-income"
-                            : "chip-expense"
-                            }`}
-                        >
-                          {transaction.type === "income"
-                            ? "💰 เงินเข้า"
-                            : "💸 เงินออก"}
-                        </span>
-
-                        {transaction.note && (
-                          <span className="chip chip-file">
-                            📝 {transaction.note}
-                          </span>
-                        )}
-
-                        {transaction.attachments.map((attachment) =>
-                          isImageAttachment(attachment) ? (
-                            <button
-                              key={attachment.id}
-                              type="button"
-                              className="chip chip-file transaction-attachment-chip"
-                              onClick={() => setPreviewAttachment(attachment)}
-                              title="ดูภาพตัวอย่าง"
-                            >
-                              🖼️ {attachment.name}
-                            </button>
-                          ) : (
-                            <a
-                              key={attachment.id}
-                              className="chip chip-file transaction-attachment-chip"
-                              href={getAttachmentDownloadUrl(attachment)}
-                              download
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              title="ดาวน์โหลดเอกสาร"
-                            >
-                              📄 {attachment.name}
-                            </a>
-                          ),
-                        )}
-
-                        {isAdmin && (
-                          <>
-                            <button
-                              type="button"
-                              className="chip chip-file"
-                              onClick={() =>
-                                openEditTransactionModal(transaction)
-                              }
-                            >
-                              ✏️ แก้ไข
-                            </button>
-
-                            <button
-                              type="button"
-                              className="chip chip-expense"
-                              onClick={() =>
-                                void deleteTransaction(transaction.id)
-                              }
-                            >
-                              🗑️ ลบ
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <section className="section">
-              <div className="section-header">
-                <div className="section-title">รูปภาพและตารางงาน</div>
-
-                {isAdmin && (
                   <button
                     type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => openEditEventModal(selectedEvent)}
+                    className="btn-nav btn-logout"
+                    onClick={() => void doLogout()}
                   >
-                    ⚙️ ตั้งค่าลิงก์สื่อ
+                    ออกจากระบบ
                   </button>
-                )}
-              </div>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-nav btn-login"
+                  onClick={openLoginModal}
+                >
+                  🔐 Admin Login
+                </button>
+              )}
+            </div>
+          </nav>
 
-              <div className="event-media-grid">
-                <div className="event-media-col event-media-gallery">
-                  <div className="event-media-heading">
-                    <div>
-                      <div className="event-media-title">📸 รูปภาพจากงาน</div>
+          <div id="app">
+            {selectedEvent ? (
+              <main className="view active">
+                <div className="detail-hero section">
+                  <button
+                    type="button"
+                    className="back-btn"
+                    onClick={() => router.push("/")}
+                  >
+                    ← กลับหน้าหลัก
+                  </button>
+
+                  <h2>{selectedEvent.name}</h2>
+
+                  {selectedEvent.desc && (
+                    <p
+                      style={{
+                        color: "var(--text-2)",
+                        marginTop: "8px",
+                      }}
+                    >
+                      {selectedEvent.desc}
+                    </p>
+                  )}
+
+                  <div className="detail-stats">
+                    <div className="detail-stat">
+                      <div className="detail-stat-label">เงินเข้า</div>
+                      <div
+                        className="detail-stat-val"
+                        style={{ color: "var(--income)" }}
+                      >
+                        ฿{formatMoney(selectedEventStats.income)}
+                      </div>
                     </div>
 
-                    {selectedEventImages.length > 0 && (
-                      <div className="slideshow-count">
-                        {selectedImageIndex + 1} / {selectedEventImages.length}
+                    <div style={{ color: "var(--border)" }}>|</div>
+
+                    <div className="detail-stat">
+                      <div className="detail-stat-label">เงินออก</div>
+                      <div
+                        className="detail-stat-val"
+                        style={{ color: "var(--expense)" }}
+                      >
+                        ฿{formatMoney(selectedEventStats.expense)}
                       </div>
+                    </div>
+
+                    <div style={{ color: "var(--border)" }}>|</div>
+
+                    <div className="detail-stat">
+                      <div className="detail-stat-label">ยอดสุทธิ</div>
+                      <div
+                        className="detail-stat-val"
+                        style={{
+                          color:
+                            selectedEventStats.balance >= 0
+                              ? "var(--income)"
+                              : "var(--expense)",
+                        }}
+                      >
+                        {selectedEventStats.balance < 0 ? "-" : ""}฿
+                        {formatMoney(Math.abs(selectedEventStats.balance))}
+                      </div>
+                    </div>
+
+                    <div style={{ color: "var(--border)" }}>|</div>
+
+                    <div className="detail-stat">
+                      <div className="detail-stat-label">จำนวนรายการ</div>
+                      <div
+                        className="detail-stat-val"
+                        style={{ color: "var(--accent)" }}
+                      >
+                        {selectedEventStats.count}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <section className="section">
+                  <div className="section-header">
+                    <div className="section-title">รายการทั้งหมด</div>
+
+                    <div
+                      style={{
+                        display: "flex",
+                        gap: "8px",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <select
+                        className="form-control"
+                        value={transactionFilter}
+                        onChange={(event) =>
+                          setTransactionFilter(
+                            event.target.value as "" | "income" | "expense",
+                          )
+                        }
+                        style={{
+                          width: "auto",
+                          padding: "8px 14px",
+                          fontSize: ".85rem",
+                        }}
+                      >
+                        <option value="">ทุกประเภท</option>
+                        <option value="income">เงินเข้า</option>
+                        <option value="expense">เงินออก</option>
+                      </select>
+
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          className="btn btn-success"
+                          onClick={openCreateTransactionModal}
+                        >
+                          ➕ เพิ่มรายการ
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {filteredTransactions.length === 0 ? (
+                    <div className="empty-state">
+                      <div className="empty-icon">🧾</div>
+                      <p>
+                        ยังไม่มีรายการ
+                        <br />
+                        {transactionFilter
+                          ? "ไม่พบรายการในประเภทนี้"
+                          : "รายการเงินเข้าและเงินออกจะแสดงที่นี่"}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="tx-list">
+                      {filteredTransactions.map((transaction) => (
+                        <article
+                          key={transaction.id}
+                          className={`tx-card tx-${transaction.type}`}
+                        >
+                          <div className="tx-top">
+                            <div className="tx-info">
+                              <div className="tx-desc">{transaction.desc}</div>
+                              <div className="tx-date">
+                                {formatDate(transaction.date)}
+                                {transaction.time ? ` • ${transaction.time.slice(0, 5)}` : ""}
+                              </div>
+                            </div>
+
+                            <div className="tx-amount">
+                              {transaction.type === "income" ? "+" : "-"}฿
+                              {formatMoney(transaction.amount)}
+                            </div>
+                          </div>
+
+                          <div className="tx-chips">
+                            <span
+                              className={`chip ${transaction.type === "income"
+                                ? "chip-income"
+                                : "chip-expense"
+                                }`}
+                            >
+                              {transaction.type === "income"
+                                ? "💰 เงินเข้า"
+                                : "💸 เงินออก"}
+                            </span>
+
+                            {transaction.note && (
+                              <span className="chip chip-file">
+                                📝 {transaction.note}
+                              </span>
+                            )}
+
+                            {transaction.attachments.map((attachment) =>
+                              isImageAttachment(attachment) ? (
+                                <button
+                                  key={attachment.id}
+                                  type="button"
+                                  className="chip chip-file transaction-attachment-chip"
+                                  onClick={() => setPreviewAttachment(attachment)}
+                                  title="ดูภาพตัวอย่าง"
+                                >
+                                  🖼️ {attachment.name}
+                                </button>
+                              ) : (
+                                <a
+                                  key={attachment.id}
+                                  className="chip chip-file transaction-attachment-chip"
+                                  href={getAttachmentDownloadUrl(attachment)}
+                                  download
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  title="ดาวน์โหลดเอกสาร"
+                                >
+                                  📄 {attachment.name}
+                                </a>
+                              ),
+                            )}
+
+                            {isAdmin && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="chip chip-file"
+                                  onClick={() =>
+                                    openEditTransactionModal(transaction)
+                                  }
+                                >
+                                  ✏️ แก้ไข
+                                </button>
+
+                                <button
+                                  type="button"
+                                  className="chip chip-expense"
+                                  onClick={() =>
+                                    void deleteTransaction(transaction.id)
+                                  }
+                                >
+                                  🗑️ ลบ
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  )}
+                </section>
+
+                <section className="section">
+                  <div className="section-header">
+                    <div className="section-title">รูปภาพและตารางงาน</div>
+
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => openEditEventModal(selectedEvent)}
+                      >
+                        ⚙️ ตั้งค่าลิงก์สื่อ
+                      </button>
                     )}
                   </div>
 
-                  {isLoadingEventImages ? (
-                    <div className="slideshow-empty slideshow-loading">
-                      <div className="slideshow-spinner" />
-                      <span>กำลังโหลดรูปจาก Google Drive...</span>
-                    </div>
-                  ) : eventImagesError ? (
-                    <div className="slideshow-empty">
-                      <span className="slideshow-empty-icon">⚠️</span>
-                      <span>{eventImagesError}</span>
-                    </div>
-                  ) : selectedEventImages.length > 0 ? (
-                    <div className="slideshow-wrap">
-                      <div className="slideshow-main">
-                        <div className="slideshow-image-backdrop" />
+                  <div className="event-media-grid">
+                    <div className="event-media-col event-media-gallery">
+                      <div className="event-media-heading">
+                        <div>
+                          <div className="event-media-title">📸 รูปภาพจากงาน</div>
+                        </div>
 
-                        <img
-                          src={selectedEventImages[selectedImageIndex].imageUrl}
-                          alt={
-                            selectedEventImages[selectedImageIndex]?.name ??
-                            `Event image ${selectedImageIndex + 1}`
-                          }
-                          className="slideshow-image"
-                          key={selectedEventImages[selectedImageIndex].id}
-                          onError={(event) => {
-                            event.currentTarget.style.opacity = "0.35";
-                          }}
-                        />
-
-                        <div className="slideshow-top-gradient" />
-                        <div className="slideshow-bottom-gradient" />
-
-
-
-                        {selectedEventImages.length > 1 && (
-                          <>
-                            <button
-                              type="button"
-                              className="slideshow-arrow prev"
-                              aria-label="รูปก่อนหน้า"
-                              onClick={() =>
-                                setSelectedImageIndex((current) =>
-                                  current === 0
-                                    ? selectedEventImages.length - 1
-                                    : current - 1,
-                                )
-                              }
-                            >
-                              ‹
-                            </button>
-
-                            <button
-                              type="button"
-                              className="slideshow-arrow next"
-                              aria-label="รูปถัดไป"
-                              onClick={() =>
-                                setSelectedImageIndex((current) =>
-                                  current === selectedEventImages.length - 1
-                                    ? 0
-                                    : current + 1,
-                                )
-                              }
-                            >
-                              ›
-                            </button>
-                          </>
+                        {selectedEventImages.length > 0 && (
+                          <div className="slideshow-count">
+                            {selectedImageIndex + 1} / {selectedEventImages.length}
+                          </div>
                         )}
                       </div>
 
-                      {selectedEventImages.length > 1 && (
-                        <div className="slideshow-thumbs-wrap">
+                      {isLoadingEventImages ? (
+                        <div className="slideshow-empty slideshow-loading">
+                          <div className="slideshow-spinner" />
+                          <span>กำลังโหลดรูปจาก Google Drive...</span>
+                        </div>
+                      ) : eventImagesError ? (
+                        <div className="slideshow-empty">
+                          <span className="slideshow-empty-icon">⚠️</span>
+                          <span>{eventImagesError}</span>
+                        </div>
+                      ) : selectedEventImages.length > 0 ? (
+                        <div className="slideshow-wrap">
+                          <div className="slideshow-main">
+                            <div className="slideshow-image-backdrop" />
+
+                            <img
+                              src={selectedEventImages[selectedImageIndex].imageUrl}
+                              alt={
+                                selectedEventImages[selectedImageIndex]?.name ??
+                                `Event image ${selectedImageIndex + 1}`
+                              }
+                              className="slideshow-image"
+                              key={selectedEventImages[selectedImageIndex].id}
+                              onError={(event) => {
+                                event.currentTarget.style.opacity = "0.35";
+                              }}
+                            />
+
+                            <div className="slideshow-top-gradient" />
+                            <div className="slideshow-bottom-gradient" />
 
 
-                          <div className="slideshow-thumbs">
-                            {selectedEventImages.map((image, index) => (
-                              <button
-                                type="button"
-                                key={`${image.id}-${index}`}
-                                className={`slideshow-thumb-btn ${index === selectedImageIndex ? "active" : ""
-                                  }`}
-                                onClick={() => setSelectedImageIndex(index)}
-                                aria-label={`เลือกรูปที่ ${index + 1}`}
-                                aria-current={
-                                  index === selectedImageIndex
-                                    ? "true"
-                                    : undefined
-                                }
-                              >
-                                <img
-                                  className="slideshow-thumb"
-                                  src={image.imageUrl}
-                                  alt={`Thumbnail ${index + 1}`}
-                                />
-                                <span className="slideshow-thumb-number">
-                                  {index + 1}
-                                </span>
-                              </button>
-                            ))}
+
+                            {selectedEventImages.length > 1 && (
+                              <>
+                                <button
+                                  type="button"
+                                  className="slideshow-arrow prev"
+                                  aria-label="รูปก่อนหน้า"
+                                  onClick={() =>
+                                    setSelectedImageIndex((current) =>
+                                      current === 0
+                                        ? selectedEventImages.length - 1
+                                        : current - 1,
+                                    )
+                                  }
+                                >
+                                  ‹
+                                </button>
+
+                                <button
+                                  type="button"
+                                  className="slideshow-arrow next"
+                                  aria-label="รูปถัดไป"
+                                  onClick={() =>
+                                    setSelectedImageIndex((current) =>
+                                      current === selectedEventImages.length - 1
+                                        ? 0
+                                        : current + 1,
+                                    )
+                                  }
+                                >
+                                  ›
+                                </button>
+                              </>
+                            )}
                           </div>
+
+                          {selectedEventImages.length > 1 && (
+                            <div className="slideshow-thumbs-wrap">
+
+
+                              <div className="slideshow-thumbs">
+                                {selectedEventImages.map((image, index) => (
+                                  <button
+                                    type="button"
+                                    key={`${image.id}-${index}`}
+                                    className={`slideshow-thumb-btn ${index === selectedImageIndex ? "active" : ""
+                                      }`}
+                                    onClick={() => setSelectedImageIndex(index)}
+                                    aria-label={`เลือกรูปที่ ${index + 1}`}
+                                    aria-current={
+                                      index === selectedImageIndex
+                                        ? "true"
+                                        : undefined
+                                    }
+                                  >
+                                    <img
+                                      className="slideshow-thumb"
+                                      src={image.imageUrl}
+                                      alt={`Thumbnail ${index + 1}`}
+                                    />
+                                    <span className="slideshow-thumb-number">
+                                      {index + 1}
+                                    </span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="slideshow-empty">
+                          <span className="slideshow-empty-icon">🖼️</span>
+                          <span>ยังไม่มีรูปภาพในโฟลเดอร์ Google Drive นี้</span>
                         </div>
                       )}
                     </div>
+
+                    <div className="event-media-col event-schedule-card">
+                      <div className="event-media-heading">
+                        <div>
+                          <div className="event-media-title">📅 ตารางงาน</div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        className="schedule-image-frame"
+                        onClick={() => setIsSchedulePreviewOpen(true)}
+                        aria-label="เปิดตารางงานแบบขยาย"
+                        style={{ cursor: "zoom-in" }}
+                      >
+                        <img
+                          className="event-media-img"
+                          src={getScheduleImageUrl(selectedEvent.scheduleUrl)}
+                          alt="Schedule"
+                        />
+                      </button>
+                    </div>
+                  </div>
+
+                </section>
+              </main>
+            ) : (
+              <main className="view active">
+                <div style={{ height: "40px" }} />
+
+                <section className="section latest-event-section">
+                  <div className="section-header">
+                    <div className="section-title">Event ล่าสุด</div>
+
+                    {isAdmin && (
+                      <>
+                        <input
+                          id="latest-event-promo-upload"
+                          type="file"
+                          accept="image/jpeg,image/png,image/webp,image/gif"
+                          hidden
+                          disabled={isUploadingLatestEventImage}
+                          onChange={(event) => {
+                            const file = event.target.files?.[0] ?? null;
+                            event.currentTarget.value = "";
+                            void handleLatestEventImageUpload(file);
+                          }}
+                        />
+                        <label
+                          htmlFor="latest-event-promo-upload"
+                          className="btn btn-primary btn-sm latest-event-upload-btn"
+                        >
+                          {isUploadingLatestEventImage
+                            ? "⏳ กำลังอัปโหลด..."
+                            : "⬆️ อัปโหลดรูป"}
+                        </label>
+                      </>
+                    )}
+                  </div>
+
+                  {isUploadingLatestEventImage && !latestEventImage ? (
+                    <div className="latest-event-card latest-event-loading">
+                      <div className="slideshow-spinner" />
+                      <span>กำลังอัปโหลดรูป Event ล่าสุด...</span>
+                    </div>
+                  ) : latestEventImageError && !latestEventImage ? (
+                    <div className="latest-event-card latest-event-empty">
+                      <span className="latest-event-icon">⚠️</span>
+                      <span>{latestEventImageError}</span>
+                    </div>
+                  ) : latestEventImage ? (
+                    <div className="latest-event-card latest-event-image-only">
+                      <div className="latest-event-image-wrap">
+                        <img
+                          src={latestEventImageSrc || latestEventImage.imageUrl}
+                          alt={
+                            latestEventPromoImageName
+                              ? `ภาพโปรโมท ${latestEventPromoImageName}`
+                              : "ภาพโปรโมท Event ล่าสุด"
+                          }
+                          className="latest-event-image"
+                          onError={(event) => {
+                            const candidates = getLatestEventImageCandidates(latestEventImage);
+                            const nextIndex = latestEventImageSrcIndex + 1;
+
+                            if (nextIndex < candidates.length) {
+                              setLatestEventImageSrcIndex(nextIndex);
+                              setLatestEventImageSrc(candidates[nextIndex]);
+                              return;
+                            }
+
+                            event.currentTarget.style.opacity = "0.35";
+                            setLatestEventImageError(
+                              "พบรูปใน Google Drive แต่ไม่สามารถแสดงรูปได้ อาจเป็นเรื่องสิทธิ์การเข้าถึงไฟล์",
+                            );
+                          }}
+                        />
+                      </div>
+                    </div>
                   ) : (
-                    <div className="slideshow-empty">
-                      <span className="slideshow-empty-icon">🖼️</span>
-                      <span>ยังไม่มีรูปภาพในโฟลเดอร์ Google Drive นี้</span>
+                    <div className="latest-event-card latest-event-empty">
+                      <span className="latest-event-icon">🖼️</span>
+                      <span>ยังไม่มีรูป Event ล่าสุด</span>
                     </div>
                   )}
-                </div>
+                </section>
 
-                <div className="event-media-col event-schedule-card">
-                  <div className="event-media-heading">
-                    <div>
-                      <div className="event-media-title">📅 ตารางงาน</div>
+                <section className="section">
+                  <div className="stats-grid">
+                    <div className="stat-card stat-income">
+                      <div className="stat-icon stat-icon-image"><img src="/icons/income.png" alt="เงินเข้า" /></div>
+                      <div className="stat-label">รวมเงินเข้าทั้งหมด</div>
+                      <div className="stat-value">
+                        ฿{formatMoney(globalStats.income)}
+                      </div>
                     </div>
+
+                    <div className="stat-card stat-expense">
+                      <div className="stat-icon stat-icon-image"><img src="/icons/expense.png" alt="เงินออก" /></div>
+                      <div className="stat-label">รวมเงินออกทั้งหมด</div>
+                      <div className="stat-value">
+                        ฿{formatMoney(globalStats.expense)}
+                      </div>
+                    </div>
+
+                    <div
+                      className={`stat-card stat-balance${globalStats.balance < 0 ? " negative" : ""
+                        }`}
+                    >
+                      <div className="stat-icon stat-icon-image"><img src="/icons/balance.png" alt="ยอดคงเหลือสุทธิ" /></div>
+                      <div className="stat-label">ยอดคงเหลือสุทธิ</div>
+                      <div className="stat-value">
+                        {globalStats.balance < 0 ? "-" : ""}฿
+                        {formatMoney(Math.abs(globalStats.balance))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="section-header">
+                    <div className="section-title">สรุป Event ทั้งหมด</div>
+
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        onClick={openCreateEventModal}
+                      >
+                        ➕ เพิ่ม Event
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>ชื่อ Event</th>
+                          <th>รายการ</th>
+                          <th>เงินเข้า (฿)</th>
+                          <th>เงินออก (฿)</th>
+                          <th>ยอดสุทธิ (฿)</th>
+                          {isAdmin && <th>จัดการ</th>}
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {events.length === 0 ? (
+                          <tr>
+                            <td colSpan={isAdmin ? 6 : 5}>
+                              <div className="empty-state">
+                                <div className="empty-icon">📂</div>
+                                <p>
+                                  ยังไม่มี Event
+                                  <br />
+                                  {isAdmin
+                                    ? 'คลิก "เพิ่ม Event" เพื่อเริ่มต้น'
+                                    : "รอข้อมูลจาก Admin"}
+                                </p>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : (
+                          events.map((event) => {
+                            const eventTransactions = transactions.filter(
+                              (transaction) => transaction.eventId === event.id,
+                            );
+
+                            const income = eventTransactions
+                              .filter(
+                                (transaction) => transaction.type === "income",
+                              )
+                              .reduce(
+                                (sum, transaction) =>
+                                  sum + Number(transaction.amount),
+                                0,
+                              );
+
+                            const expense = eventTransactions
+                              .filter(
+                                (transaction) => transaction.type === "expense",
+                              )
+                              .reduce(
+                                (sum, transaction) =>
+                                  sum + Number(transaction.amount),
+                                0,
+                              );
+
+                            const balance = income - expense;
+
+                            return (
+                              <tr
+                                key={event.id}
+                                onClick={() => openEventDetail(event.id)}
+                              >
+                                <td className="td-event-name">
+                                  {event.name}
+
+                                  {event.eventDate && (
+                                    <div
+                                      style={{
+                                        fontSize: ".72rem",
+                                        color: "var(--text-3)",
+                                        fontWeight: 400,
+                                        marginTop: "3px",
+                                      }}
+                                    >
+                                      📅 {formatDate(event.eventDate)}
+                                    </div>
+                                  )}
+
+                                  {event.desc && (
+                                    <div
+                                      style={{
+                                        fontSize: ".76rem",
+                                        color: "var(--text-3)",
+                                        marginTop: "2px",
+                                      }}
+                                    >
+                                      {event.desc}
+                                    </div>
+                                  )}
+                                </td>
+
+                                <td>
+                                  <span className="chip-count">
+                                    {eventTransactions.length} รายการ
+                                  </span>
+                                </td>
+
+                                <td className="td-income">
+                                  ฿{formatMoney(income)}
+                                </td>
+
+                                <td className="td-expense">
+                                  ฿{formatMoney(expense)}
+                                </td>
+
+                                <td
+                                  className={`td-balance ${balance >= 0 ? "pos" : "neg"
+                                    }`}
+                                >
+                                  {balance < 0 ? "-" : ""}฿
+                                  {formatMoney(Math.abs(balance))}
+                                </td>
+
+                                {isAdmin && (
+                                  <td
+                                    onClick={(eventObject) =>
+                                      eventObject.stopPropagation()
+                                    }
+                                  >
+                                    <div className="td-actions">
+                                      <button
+                                        type="button"
+                                        className="btn btn-ghost btn-sm"
+                                        onClick={() =>
+                                          openEditEventModal(event)
+                                        }
+                                      >
+                                        ✏️ แก้ไข
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        className="btn btn-danger btn-sm"
+                                        onClick={() =>
+                                          void deleteEvent(event.id)
+                                        }
+                                      >
+                                        🗑️
+                                      </button>
+                                    </div>
+                                  </td>
+                                )}
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section className="donate-section">
+                  <div className="donate-layout">
+                    <div className="donate-card">
+                      <div className="donate-text donate-text-full">
+                        <div className="donate-eyebrow">ร่วมสนับสนุน</div>
+
+                        <div className="donate-title">
+                          ร่วมเป็นส่วนหนึ่งของ
+                          <br />
+                          <span>OomBam Blossom FC</span>
+                        </div>
+
+                        <p className="donate-desc">
+                          ทุกการสนับสนุนของคุณจะช่วยให้โปรเจคนี้เดินหน้าต่อไปได้
+                          โอนได้ตามข้อมูลด้านล่าง แล้วอัปโหลดสลิปได้เลย
+                          ขอบคุณทุกแรงใจที่มอบให้ 🌸
+                        </p>
+
+                        <div
+                          style={{
+                            margin: "18px 0 20px",
+                            padding: "14px 16px",
+                            borderRadius: "14px",
+                            background: "rgba(255, 255, 255, 0.04)",
+                            border: "1px solid var(--border)",
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontSize: ".78rem",
+                              color: "var(--text-3)",
+                              marginBottom: "8px",
+                            }}
+                          >
+                            ข้อมูลสำหรับโอนเงิน
+                          </div>
+
+                          <div
+                            style={{
+                              display: "grid",
+                              gap: "5px",
+                              fontSize: ".88rem",
+                            }}
+                          >
+                            <div>
+                              <span style={{ color: "var(--text-3)" }}>ธนาคาร: </span>
+                              <strong>{bankName || "—"}</strong>
+                            </div>
+
+                            <div>
+                              <span style={{ color: "var(--text-3)" }}>เลขที่บัญชี: </span>
+                              <strong>{bankAccountNumber || "—"}</strong>
+                            </div>
+
+                            <div>
+                              <span style={{ color: "var(--text-3)" }}>ชื่อบัญชี: </span>
+                              <strong>{bankAccountName || "—"}</strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="donate-methods">
+                          <label
+                            className={`donate-method donate-method-button donate-method-upload${isUploadingPublicSlip ? " is-loading" : ""}`}
+                          >
+                            <input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,image/gif"
+                              disabled={isUploadingPublicSlip}
+                              onChange={(event) => {
+                                const file = event.target.files?.[0] ?? null;
+                                void handlePublicSlipUpload(file);
+                                event.currentTarget.value = "";
+                              }}
+                              hidden
+                            />
+                            {isUploadingPublicSlip ? "⏳ กำลังอัปโหลด..." : "📎 อัปโหลดสลิป"}
+                          </label>
+
+                          <button
+                            type="button"
+                            className="donate-method donate-method-button donate-method-copy"
+                            onClick={() => void copyBankAccount()}
+                          >
+                            📋 คัดลอกหมายเลขบัญชี
+                          </button>
+                        </div>
+
+                        <div className="donate-upload-hint">
+                          รองรับ JPG, PNG, WEBP หรือ GIF ขนาดไม่เกิน 4 MB
+                        </div>
+                      </div>
+                    </div>
+
+                    <aside className="social-card">
+                      <div className="social-card-eyebrow">ติดตามเรา</div>
+                      <div className="social-card-title">Social Media</div>
+                      <div className="social-card-desc">
+                        ติดตามข่าวสารและอัปเดตต่าง ๆ ของ OomBam Blossom FC
+                      </div>
+
+                      <div className="social-list">
+                        <a
+                          className="social-item"
+                          href={SOCIAL_MEDIA_LINKS.x}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label="X - OomBam Blossom FC"
+                        >
+                          <span className="social-icon">𝕏</span>
+                          <span className="social-content">
+                            <span className="social-name">X</span>
+                            <span className="social-handle">@oombamblossomfc</span>
+                          </span>
+                          <span className="social-arrow">↗</span>
+                        </a>
+
+                        <a
+                          className="social-item"
+                          href={SOCIAL_MEDIA_LINKS.instagram}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label="Instagram - OomBam Blossom FC"
+                        >
+                          <span className="social-icon social-icon-instagram">◎</span>
+                          <span className="social-content">
+                            <span className="social-name">Instagram</span>
+                            <span className="social-handle">@oombamblossomfc</span>
+                          </span>
+                          <span className="social-arrow">↗</span>
+                        </a>
+
+                        <a
+                          className="social-item"
+                          href={SOCIAL_MEDIA_LINKS.facebook}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label="Facebook - OomBam Blossom FC"
+                        >
+                          <span className="social-icon social-icon-facebook">f</span>
+                          <span className="social-content">
+                            <span className="social-name">Facebook</span>
+                            <span className="social-handle">oombamblossomfc</span>
+                          </span>
+                          <span className="social-arrow">↗</span>
+                        </a>
+
+                        <a
+                          className="social-item"
+                          href={SOCIAL_MEDIA_LINKS.tiktok}
+                          target="_blank"
+                          rel="noreferrer"
+                          aria-label="TikTok - OomBam Blossom FC"
+                        >
+                          <span className="social-icon social-icon-tiktok">♪</span>
+                          <span className="social-content">
+                            <span className="social-name">TikTok</span>
+                            <span className="social-handle">@oombamblossomfc</span>
+                          </span>
+                          <span className="social-arrow">↗</span>
+                        </a>
+                      </div>
+                    </aside>
+                  </div>
+                </section>
+              </main>
+            )}
+          </div>
+
+          {isEventModalOpen && (
+            <div
+              className="modal-overlay open"
+              onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                  closeEventModal();
+                }
+              }}
+            >
+              <div className="modal">
+                <div className="modal-header">
+                  <div className="modal-title">
+                    {editingEventId ? "✏️ แก้ไข Event" : "➕ สร้าง Event ใหม่"}
                   </div>
 
                   <button
                     type="button"
-                    className="schedule-image-frame"
-                    onClick={() => setIsSchedulePreviewOpen(true)}
-                    aria-label="เปิดตารางงานแบบขยาย"
-                    style={{ cursor: "zoom-in" }}
+                    className="modal-close"
+                    onClick={closeEventModal}
                   >
-                    <img
-                      className="event-media-img"
-                      src={getScheduleImageUrl(selectedEvent.scheduleUrl)}
-                      alt="Schedule"
-                    />
+                    ✕
                   </button>
                 </div>
-              </div>
 
-            </section>
-          </main>
-        ) : (
-          <main className="view active">
-            <div style={{ height: "40px" }} />
+                <div className="form-group">
+                  <label className="form-label">ชื่อ Event *</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="เช่น งานปีใหม่ 2025, โปรเจกต์ A..."
+                    value={eventName}
+                    onChange={(event) => setEventName(event.target.value)}
+                    autoFocus
+                  />
+                </div>
 
-            <section className="section latest-event-section">
-              <div className="section-header">
-                <div className="section-title">Event ล่าสุด</div>
+                <div className="form-group">
+                  <label className="form-label">วันที่ Event *</label>
+                  <input
+                    type="date"
+                    className="form-control"
+                    value={eventDate}
+                    onChange={(event) => setEventDate(event.target.value)}
+                    required
+                  />
+                  <div className="drive-hint">
+                    📅 วันที่จัด Event จริง
+                  </div>
+                </div>
 
-                {isAdmin && (
+                <div className="form-group">
+                  <label className="form-label">
+                    รายละเอียด (ไม่บังคับ)
+                  </label>
+                  <textarea
+                    className="form-control"
+                    rows={3}
+                    placeholder="รายละเอียดเพิ่มเติม..."
+                    value={eventDesc}
+                    onChange={(event) => setEventDesc(event.target.value)}
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">
+                    🖼️ ลิงก์โฟลเดอร์รูปภาพ Google Drive
+                  </label>
+                  <input
+                    type="url"
+                    className="form-control"
+                    placeholder="https://drive.google.com/drive/folders/..."
+                    value={imageFolderUrl}
+                    onChange={(event) => setImageFolderUrl(event.target.value)}
+                  />
+                  <div className="drive-hint">
+                    📌 ใส่ลิงก์โฟลเดอร์เพียง 1 ลิงก์ ระบบจะดึงรูปทั้งหมดในโฟลเดอร์
+                    <br />
+                    🔓 ต้องตั้งโฟลเดอร์เป็น “ทุกคนที่มีลิงก์ → ผู้ดู”
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">
+                    ลิงก์ภาพตารางงาน (Google Drive - ไม่บังคับ)
+                  </label>
+                  <input
+                    type="url"
+                    className="form-control"
+                    placeholder="https://drive.google.com/file/d/..."
+                    value={scheduleUrl}
+                    onChange={(event) => setScheduleUrl(event.target.value)}
+                  />
+                  <div
+                    className="drive-hint"
+                    style={{ marginTop: "8px" }}
+                  >
+                    📎 ใส่ลิงก์ภาพตารางงาน หรือเว้นว่างเพื่อใช้ภาพเริ่มต้น
+                  </div>
+                </div>
+
+                <div className="form-actions">
                   <button
                     type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={openLatestEventFolderModal}
+                    className="btn btn-ghost"
+                    onClick={closeEventModal}
                   >
-                    ⚙️ ตั้งค่าโฟลเดอร์
+                    ยกเลิก
                   </button>
-                )}
-              </div>
 
-              {isLoadingLatestEventImage ? (
-                <div className="latest-event-card latest-event-loading">
-                  <div className="slideshow-spinner" />
-                  <span>กำลังโหลดรูปโปรโมทจาก Google Drive...</span>
-                </div>
-              ) : latestEventImageError ? (
-                <div className="latest-event-card latest-event-empty">
-                  <span className="latest-event-icon">⚠️</span>
-                  <span>{latestEventImageError}</span>
-                </div>
-              ) : latestEventImage ? (
-                <button
-                  type="button"
-                  className="latest-event-card"
-                  onClick={() => {
-                    if (events[0]) {
-                      openEventDetail(events[0].id);
-                    }
-                  }}
-                  disabled={!events[0]}
-                >
-                  <div className="latest-event-image-wrap">
-                    <img
-                      src={latestEventImageSrc || latestEventImage.imageUrl}
-                      alt={
-                        events[0]?.name
-                          ? `ภาพโปรโมท ${events[0].name}`
-                          : "ภาพโปรโมท Event ล่าสุด"
-                      }
-                      className="latest-event-image"
-                      onError={(event) => {
-                        const candidates = getLatestEventImageCandidates(latestEventImage);
-                        const nextIndex = latestEventImageSrcIndex + 1;
-
-                        if (nextIndex < candidates.length) {
-                          setLatestEventImageSrcIndex(nextIndex);
-                          setLatestEventImageSrc(candidates[nextIndex]);
-                          return;
-                        }
-
-                        event.currentTarget.style.opacity = "0.35";
-                        setLatestEventImageError(
-                          "พบรูปใน Google Drive แต่ไม่สามารถแสดงรูปได้ อาจเป็นเรื่องสิทธิ์การเข้าถึงไฟล์",
-                        );
-                      }}
-                    />
-                  </div>
-
-                  <div className="latest-event-info">
-                    <div className="latest-event-kicker">LATEST EVENT</div>
-
-                    <div className="latest-event-name">
-                      {events[0]?.name ?? "Event ล่าสุด"}
-                    </div>
-
-                    {events[0]?.eventDate && (
-                      <div className="latest-event-date">
-                        📅 {formatDate(events[0].eventDate)}
-                      </div>
-                    )}
-
-                    {events[0]?.desc && (
-                      <div className="latest-event-desc">
-                        {events[0].desc}
-                      </div>
-                    )}
-
-                    {events[0] && (
-                      <div className="latest-event-link">
-                        ดูรายละเอียด Event →
-                      </div>
-                    )}
-                  </div>
-                </button>
-              ) : (
-                <div className="latest-event-card latest-event-empty">
-                  <span className="latest-event-icon">🖼️</span>
-                  <span>
-                    ยังไม่มีรูปโปรโมทในโฟลเดอร์ Google Drive ที่ตั้งค่าไว้
-                  </span>
-                </div>
-              )}
-            </section>
-
-            <section className="section">
-              <div className="stats-grid">
-                <div className="stat-card stat-income">
-                  <div className="stat-icon stat-icon-image"><img src="/icons/income.png" alt="เงินเข้า" /></div>
-                  <div className="stat-label">รวมเงินเข้าทั้งหมด</div>
-                  <div className="stat-value">
-                    ฿{formatMoney(globalStats.income)}
-                  </div>
-                </div>
-
-                <div className="stat-card stat-expense">
-                  <div className="stat-icon stat-icon-image"><img src="/icons/expense.png" alt="เงินออก" /></div>
-                  <div className="stat-label">รวมเงินออกทั้งหมด</div>
-                  <div className="stat-value">
-                    ฿{formatMoney(globalStats.expense)}
-                  </div>
-                </div>
-
-                <div
-                  className={`stat-card stat-balance${globalStats.balance < 0 ? " negative" : ""
-                    }`}
-                >
-                  <div className="stat-icon stat-icon-image"><img src="/icons/balance.png" alt="ยอดคงเหลือสุทธิ" /></div>
-                  <div className="stat-label">ยอดคงเหลือสุทธิ</div>
-                  <div className="stat-value">
-                    {globalStats.balance < 0 ? "-" : ""}฿
-                    {formatMoney(Math.abs(globalStats.balance))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="section-header">
-                <div className="section-title">สรุป Event ทั้งหมด</div>
-
-                {isAdmin && (
                   <button
                     type="button"
                     className="btn btn-primary"
-                    onClick={openCreateEventModal}
+                    onClick={() => void saveEvent()}
                   >
-                    ➕ เพิ่ม Event
+                    💾 บันทึก
                   </button>
-                )}
-              </div>
-
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>ชื่อ Event</th>
-                      <th>รายการ</th>
-                      <th>เงินเข้า (฿)</th>
-                      <th>เงินออก (฿)</th>
-                      <th>ยอดสุทธิ (฿)</th>
-                      {isAdmin && <th>จัดการ</th>}
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {events.length === 0 ? (
-                      <tr>
-                        <td colSpan={isAdmin ? 6 : 5}>
-                          <div className="empty-state">
-                            <div className="empty-icon">📂</div>
-                            <p>
-                              ยังไม่มี Event
-                              <br />
-                              {isAdmin
-                                ? 'คลิก "เพิ่ม Event" เพื่อเริ่มต้น'
-                                : "รอข้อมูลจาก Admin"}
-                            </p>
-                          </div>
-                        </td>
-                      </tr>
-                    ) : (
-                      events.map((event) => {
-                        const eventTransactions = transactions.filter(
-                          (transaction) => transaction.eventId === event.id,
-                        );
-
-                        const income = eventTransactions
-                          .filter(
-                            (transaction) => transaction.type === "income",
-                          )
-                          .reduce(
-                            (sum, transaction) =>
-                              sum + Number(transaction.amount),
-                            0,
-                          );
-
-                        const expense = eventTransactions
-                          .filter(
-                            (transaction) => transaction.type === "expense",
-                          )
-                          .reduce(
-                            (sum, transaction) =>
-                              sum + Number(transaction.amount),
-                            0,
-                          );
-
-                        const balance = income - expense;
-
-                        return (
-                          <tr
-                            key={event.id}
-                            onClick={() => openEventDetail(event.id)}
-                          >
-                            <td className="td-event-name">
-                              {event.name}
-
-                              {event.eventDate && (
-                                <div
-                                  style={{
-                                    fontSize: ".72rem",
-                                    color: "var(--text-3)",
-                                    fontWeight: 400,
-                                    marginTop: "3px",
-                                  }}
-                                >
-                                  📅 {formatDate(event.eventDate)}
-                                </div>
-                              )}
-
-                              {event.desc && (
-                                <div
-                                  style={{
-                                    fontSize: ".76rem",
-                                    color: "var(--text-3)",
-                                    marginTop: "2px",
-                                  }}
-                                >
-                                  {event.desc}
-                                </div>
-                              )}
-                            </td>
-
-                            <td>
-                              <span className="chip-count">
-                                {eventTransactions.length} รายการ
-                              </span>
-                            </td>
-
-                            <td className="td-income">
-                              ฿{formatMoney(income)}
-                            </td>
-
-                            <td className="td-expense">
-                              ฿{formatMoney(expense)}
-                            </td>
-
-                            <td
-                              className={`td-balance ${balance >= 0 ? "pos" : "neg"
-                                }`}
-                            >
-                              {balance < 0 ? "-" : ""}฿
-                              {formatMoney(Math.abs(balance))}
-                            </td>
-
-                            {isAdmin && (
-                              <td
-                                onClick={(eventObject) =>
-                                  eventObject.stopPropagation()
-                                }
-                              >
-                                <div className="td-actions">
-                                  <button
-                                    type="button"
-                                    className="btn btn-ghost btn-sm"
-                                    onClick={() =>
-                                      openEditEventModal(event)
-                                    }
-                                  >
-                                    ✏️ แก้ไข
-                                  </button>
-
-                                  <button
-                                    type="button"
-                                    className="btn btn-danger btn-sm"
-                                    onClick={() =>
-                                      void deleteEvent(event.id)
-                                    }
-                                  >
-                                    🗑️
-                                  </button>
-                                </div>
-                              </td>
-                            )}
-                          </tr>
-                        );
-                      })
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section className="donate-section">
-              <div className="donate-card">
-                {isAdmin && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm donate-admin-btn show"
-                    onClick={openQrModal}
-                  >
-                    ⚙️ ตั้งค่า QR
-                  </button>
-                )}
-
-                <div className="donate-qr-wrap">
-                  <div className="donate-qr-frame">
-                    {qrUrl ? (
-                      <img src={getQrImageUrl(qrUrl)} alt="QR Code โอนเงิน" />
-                    ) : (
-                      <div className="donate-qr-placeholder">
-                        <span className="qr-icon">📱</span>
-                        <span>
-                          QR Code
-                          <br />
-                          ยังไม่ได้ตั้งค่า
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="donate-qr-badge">📲 Scan to Pay</div>
-                </div>
-
-                <div className="donate-text">
-                  <div className="donate-eyebrow">ร่วมสนับสนุน</div>
-
-                  <div className="donate-title">
-                    ร่วมเป็นส่วนหนึ่งของ
-                    <br />
-                    <span>OomBam Blossom FC</span>
-                  </div>
-
-                  <p className="donate-desc">
-                    ทุกการสนับสนุนของคุณจะช่วยให้โปรเจคนี้เดินหน้าต่อไปได้
-                    สแกน QR Code หรือโอนเงินผ่านช่องทางด้านล่างได้เลย
-                    ขอบคุณทุกแรงใจที่มอบให้ 🌸
-                  </p>
-
-                  <div
-                    style={{
-                      margin: "18px 0 20px",
-                      padding: "14px 16px",
-                      borderRadius: "14px",
-                      background: "rgba(255, 255, 255, 0.04)",
-                      border: "1px solid var(--border)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: ".78rem",
-                        color: "var(--text-3)",
-                        marginBottom: "8px",
-                      }}
-                    >
-                      ข้อมูลสำหรับโอนเงิน
-                    </div>
-
-                    <div
-                      style={{
-                        display: "grid",
-                        gap: "5px",
-                        fontSize: ".88rem",
-                      }}
-                    >
-                      <div>
-                        <span style={{ color: "var(--text-3)" }}>ธนาคาร: </span>
-                        <strong>{bankName || "—"}</strong>
-                      </div>
-
-                      <div>
-                        <span style={{ color: "var(--text-3)" }}>เลขที่บัญชี: </span>
-                        <strong>{bankAccountNumber || "—"}</strong>
-                      </div>
-
-                      <div>
-                        <span style={{ color: "var(--text-3)" }}>ชื่อบัญชี: </span>
-                        <strong>{bankAccountName || "—"}</strong>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="donate-methods">
-                    <button
-                      type="button"
-                      className="donate-method donate-method-button donate-method-save"
-                      onClick={() => void saveQrImage()}
-                    >
-                      💾 Save QR
-                    </button>
-
-                    <button
-                      type="button"
-                      className="donate-method donate-method-button donate-method-copy"
-                      onClick={() => void copyBankAccount()}
-                    >
-                      📋 คัดลอกหมายเลขบัญชี
-                    </button>
-                  </div>
                 </div>
               </div>
-            </section>
-          </main>
-        )}
-      </div>
-
-      {isEventModalOpen && (
-        <div
-          className="modal-overlay open"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              closeEventModal();
-            }
-          }}
-        >
-          <div className="modal">
-            <div className="modal-header">
-              <div className="modal-title">
-                {editingEventId ? "✏️ แก้ไข Event" : "➕ สร้าง Event ใหม่"}
-              </div>
-
-              <button
-                type="button"
-                className="modal-close"
-                onClick={closeEventModal}
-              >
-                ✕
-              </button>
             </div>
+          )}
 
-            <div className="form-group">
-              <label className="form-label">ชื่อ Event *</label>
-              <input
-                type="text"
-                className="form-control"
-                placeholder="เช่น งานปีใหม่ 2025, โปรเจกต์ A..."
-                value={eventName}
-                onChange={(event) => setEventName(event.target.value)}
-                autoFocus
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">วันที่ Event *</label>
-              <input
-                type="date"
-                className="form-control"
-                value={eventDate}
-                onChange={(event) => setEventDate(event.target.value)}
-                required
-              />
-              <div className="drive-hint">
-                📅 วันที่จัด Event จริง
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">
-                รายละเอียด (ไม่บังคับ)
-              </label>
-              <textarea
-                className="form-control"
-                rows={3}
-                placeholder="รายละเอียดเพิ่มเติม..."
-                value={eventDesc}
-                onChange={(event) => setEventDesc(event.target.value)}
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">
-                🖼️ ลิงก์โฟลเดอร์รูปภาพ Google Drive
-              </label>
-              <input
-                type="url"
-                className="form-control"
-                placeholder="https://drive.google.com/drive/folders/..."
-                value={imageFolderUrl}
-                onChange={(event) => setImageFolderUrl(event.target.value)}
-              />
-              <div className="drive-hint">
-                📌 ใส่ลิงก์โฟลเดอร์เพียง 1 ลิงก์ ระบบจะดึงรูปทั้งหมดในโฟลเดอร์
-                <br />
-                🔓 ต้องตั้งโฟลเดอร์เป็น “ทุกคนที่มีลิงก์ → ผู้ดู”
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">
-                ลิงก์ภาพตารางงาน (Google Drive - ไม่บังคับ)
-              </label>
-              <input
-                type="url"
-                className="form-control"
-                placeholder="https://drive.google.com/file/d/..."
-                value={scheduleUrl}
-                onChange={(event) => setScheduleUrl(event.target.value)}
-              />
-              <div
-                className="drive-hint"
-                style={{ marginTop: "8px" }}
-              >
-                📎 ใส่ลิงก์ภาพตารางงาน หรือเว้นว่างเพื่อใช้ภาพเริ่มต้น
-              </div>
-            </div>
-
-            <div className="form-actions">
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={closeEventModal}
-              >
-                ยกเลิก
-              </button>
-
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => void saveEvent()}
-              >
-                💾 บันทึก
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isTransactionModalOpen && (
-        <div
-          className="modal-overlay open"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              closeTransactionModal();
-            }
-          }}
-        >
-          <div className="modal">
-            <div className="modal-header">
-              <div className="modal-title">
-                {editingTransactionId
-                  ? "✏️ แก้ไขรายการ"
-                  : "➕ เพิ่มรายการ"}
-              </div>
-
-              <button
-                type="button"
-                className="modal-close"
-                onClick={closeTransactionModal}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="form-row">
-              <div className="form-group">
-                <label className="form-label">วันที่ *</label>
-                <input
-                  type="date"
-                  className="form-control"
-                  value={transactionDate}
-                  onChange={(event) =>
-                    setTransactionDate(event.target.value)
-                  }
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">เวลา</label>
-                <input
-                  type="time"
-                  step="1"
-                  className="form-control"
-                  value={transactionTime}
-                  onChange={(event) =>
-                    setTransactionTime(event.target.value)
-                  }
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">ประเภท *</label>
-                <select
-                  className="form-control"
-                  value={transactionType}
-                  onChange={(event) =>
-                    setTransactionType(
-                      event.target.value as "income" | "expense",
-                    )
-                  }
-                >
-                  <option value="income">เงินเข้า</option>
-                  <option value="expense">เงินออก</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">รายละเอียด *</label>
-              <input
-                type="text"
-                className="form-control"
-                placeholder="เช่น เงินสนับสนุน, ค่าเดินทาง, ค่าอาหาร..."
-                value={transactionDesc}
-                onChange={(event) =>
-                  setTransactionDesc(event.target.value)
+          {isTransactionModalOpen && (
+            <div
+              className="modal-overlay open"
+              onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                  closeTransactionModal();
                 }
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">
-                จำนวนเงิน (฿) *
-              </label>
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                className={`form-control ${transactionType === "income"
-                  ? "input-type-income"
-                  : "input-type-expense"
-                  }`}
-                placeholder="0.00"
-                value={transactionAmount}
-                onChange={(event) =>
-                  setTransactionAmount(event.target.value)
-                }
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">
-                หมายเหตุ (ไม่บังคับ)
-              </label>
-              <textarea
-                className="form-control"
-                rows={3}
-                placeholder="รายละเอียดเพิ่มเติม..."
-                value={transactionNote}
-                onChange={(event) =>
-                  setTransactionNote(event.target.value)
-                }
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">📎 ไฟล์ประกอบรายการ</label>
-
-              <div className="transaction-upload-grid">
-                <label className="transaction-upload-card transaction-upload-slip">
-                  <span className="transaction-upload-icon">🧾</span>
-                  <span className="transaction-upload-title">อัปโหลดสลิป</span>
-                  <span className="transaction-upload-subtitle">
-                    ระบบจะอ่านธนาคาร ประเภท ผู้โอน ผู้รับ วันที่ เวลา และจำนวนเงิน
-                  </span>
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,image/gif"
-                    onChange={(event) => {
-                      void handleSlipFileChange(event.target.files?.[0] ?? null);
-                      event.currentTarget.value = "";
-                    }}
-                    disabled={
-                      isUploadingAttachment ||
-                      isReadingSlip ||
-                      (getAttachmentSlotCount() >= 5 && !transactionSlipFile)
-                    }
-                    hidden
-                  />
-                </label>
-
-                <label className="transaction-upload-card transaction-upload-document">
-                  <span className="transaction-upload-icon">📎</span>
-                  <span className="transaction-upload-title">อัปโหลดเอกสาร</span>
-                  <span className="transaction-upload-subtitle">
-                    PDF, JPG, PNG, WEBP, GIF
-                  </span>
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,.pdf"
-                    multiple
-                    onChange={(event) => {
-                      handleTransactionDocumentChange(event.target.files);
-                      event.currentTarget.value = "";
-                    }}
-                    disabled={
-                      isUploadingAttachment ||
-                      isReadingSlip ||
-                      getAttachmentSlotCount() >= 5
-                    }
-                    hidden
-                  />
-                </label>
-              </div>
-
-              {isReadingSlip && (
-                <div className="drive-hint slip-reading-status">
-                  🔎 กำลังอ่านข้อมูลจากสลิป...
-                </div>
-              )}
-
-              {slipError && (
-                <div className="error-msg show">{slipError}</div>
-              )}
-
-              {transactionSlipFile && (
-                <div className="transaction-file-row transaction-slip-file-row">
-                  <div className="transaction-file-main">
-                    <span className="transaction-file-name">
-                      🧾 {transactionSlipFile.name}
-                    </span>
-
-                    {transactionSlipData && (
-                      <div className="transaction-slip-data-grid">
-                        <span>
-                          <strong>ธนาคาร:</strong>{" "}
-                          {transactionSlipData.bankName || "ไม่พบข้อมูล"}
-                        </span>
-                        <span>
-                          <strong>ประเภท:</strong>{" "}
-                          {transactionSlipData.transactionType === "income"
-                            ? "เงินเข้า"
-                            : transactionSlipData.transactionType === "expense"
-                              ? "เงินออก"
-                              : "ไม่ระบุ"}
-                        </span>
-                        <span>
-                          <strong>ผู้โอน:</strong>{" "}
-                          {transactionSlipData.payerName || "ไม่พบข้อมูล"}
-                        </span>
-                        <span>
-                          <strong>ผู้รับ:</strong>{" "}
-                          {transactionSlipData.payeeName || "ไม่พบข้อมูล"}
-                        </span>
-                        <span>
-                          <strong>วันที่:</strong>{" "}
-                          {transactionSlipData.transferDate || "ไม่พบข้อมูล"}
-                        </span>
-                        <span>
-                          <strong>เวลา:</strong>{" "}
-                          {transactionSlipData.transferTime || "ไม่พบข้อมูล"}
-                        </span>
-                        <span>
-                          <strong>จำนวนเงิน:</strong>{" "}
-                          {typeof transactionSlipData.amount === "number"
-                            ? `฿${formatMoney(transactionSlipData.amount)}`
-                            : "ไม่พบข้อมูล"}
-                        </span>
-                      </div>
-                    )}
+              }}
+            >
+              <div className="modal">
+                <div className="modal-header">
+                  <div className="modal-title">
+                    {editingTransactionId
+                      ? "✏️ แก้ไขรายการ"
+                      : "➕ เพิ่มรายการ"}
                   </div>
 
                   <button
                     type="button"
-                    className="btn btn-ghost btn-sm"
-                    onClick={removeTransactionSlip}
-                    disabled={isUploadingAttachment}
+                    className="modal-close"
+                    onClick={closeTransactionModal}
                   >
-                    ลบสลิป
+                    ✕
                   </button>
                 </div>
-              )}
 
-              {transactionAttachments.length > 0 && (
-                <div className="transaction-selected-list">
-                  {transactionAttachments.map((file, index) => (
-                    <div
-                      key={`${file.name}-${file.lastModified}-${index}`}
-                      className="transaction-file-row"
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="form-label">วันที่ *</label>
+                    <input
+                      type="date"
+                      className="form-control"
+                      value={transactionDate}
+                      onChange={(event) =>
+                        setTransactionDate(event.target.value)
+                      }
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">เวลา</label>
+                    <input
+                      type="time"
+                      step="1"
+                      className="form-control"
+                      value={transactionTime}
+                      onChange={(event) =>
+                        setTransactionTime(event.target.value)
+                      }
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">ประเภท *</label>
+                    <select
+                      className="form-control"
+                      value={transactionType}
+                      onChange={(event) =>
+                        setTransactionType(
+                          event.target.value as "income" | "expense",
+                        )
+                      }
                     >
-                      <span className="transaction-file-name">
-                        📄 {file.name}
+                      <option value="income">เงินเข้า</option>
+                      <option value="expense">เงินออก</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">รายละเอียด *</label>
+                  <input
+                    type="text"
+                    className="form-control"
+                    placeholder="เช่น เงินสนับสนุน, ค่าเดินทาง, ค่าอาหาร..."
+                    value={transactionDesc}
+                    onChange={(event) =>
+                      setTransactionDesc(event.target.value)
+                    }
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">
+                    จำนวนเงิน (฿) *
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    className={`form-control ${transactionType === "income"
+                      ? "input-type-income"
+                      : "input-type-expense"
+                      }`}
+                    placeholder="0.00"
+                    value={transactionAmount}
+                    onChange={(event) =>
+                      setTransactionAmount(event.target.value)
+                    }
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">
+                    หมายเหตุ (ไม่บังคับ)
+                  </label>
+                  <textarea
+                    className="form-control"
+                    rows={3}
+                    placeholder="รายละเอียดเพิ่มเติม..."
+                    value={transactionNote}
+                    onChange={(event) =>
+                      setTransactionNote(event.target.value)
+                    }
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">📎 ไฟล์ประกอบรายการ</label>
+
+                  <div className="transaction-upload-grid">
+                    <label className="transaction-upload-card transaction-upload-slip">
+                      <span className="transaction-upload-icon">🧾</span>
+                      <span className="transaction-upload-title">อัปโหลดสลิป</span>
+                      <span className="transaction-upload-subtitle">
+                        ระบบจะอ่านธนาคาร ประเภท ผู้โอน ผู้รับ วันที่ เวลา และจำนวนเงิน
                       </span>
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif"
+                        onChange={(event) => {
+                          void handleSlipFileChange(event.target.files?.[0] ?? null);
+                          event.currentTarget.value = "";
+                        }}
+                        disabled={
+                          isUploadingAttachment ||
+                          isReadingSlip ||
+                          (getAttachmentSlotCount() >= 5 && !transactionSlipFile)
+                        }
+                        hidden
+                      />
+                    </label>
+
+                    <label className="transaction-upload-card transaction-upload-document">
+                      <span className="transaction-upload-icon">📎</span>
+                      <span className="transaction-upload-title">อัปโหลดเอกสาร</span>
+                      <span className="transaction-upload-subtitle">
+                        PDF, JPG, PNG, WEBP, GIF
+                      </span>
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp,image/gif,application/pdf,.pdf"
+                        multiple
+                        onChange={(event) => {
+                          handleTransactionDocumentChange(event.target.files);
+                          event.currentTarget.value = "";
+                        }}
+                        disabled={
+                          isUploadingAttachment ||
+                          isReadingSlip ||
+                          getAttachmentSlotCount() >= 5
+                        }
+                        hidden
+                      />
+                    </label>
+                  </div>
+
+                  {isReadingSlip && (
+                    <div className="drive-hint slip-reading-status">
+                      🔎 กำลังอ่านข้อมูลจากสลิป...
+                    </div>
+                  )}
+
+                  {slipError && (
+                    <div className="error-msg show">{slipError}</div>
+                  )}
+
+                  {transactionSlipFile && (
+                    <div className="transaction-file-row transaction-slip-file-row">
+                      <div className="transaction-file-main">
+                        <span className="transaction-file-name">
+                          🧾 {transactionSlipFile.name}
+                        </span>
+
+                        {transactionSlipData && (
+                          <div className="transaction-slip-data-grid">
+                            <span>
+                              <strong>ธนาคาร:</strong>{" "}
+                              {transactionSlipData.bankName || "ไม่พบข้อมูล"}
+                            </span>
+                            <span>
+                              <strong>ประเภท:</strong>{" "}
+                              {transactionSlipData.transactionType === "income"
+                                ? "เงินเข้า"
+                                : transactionSlipData.transactionType === "expense"
+                                  ? "เงินออก"
+                                  : "ไม่ระบุ"}
+                            </span>
+                            <span>
+                              <strong>ผู้โอน:</strong>{" "}
+                              {transactionSlipData.payerName || "ไม่พบข้อมูล"}
+                            </span>
+                            <span>
+                              <strong>ผู้รับ:</strong>{" "}
+                              {transactionSlipData.payeeName || "ไม่พบข้อมูล"}
+                            </span>
+                            <span>
+                              <strong>วันที่:</strong>{" "}
+                              {transactionSlipData.transferDate || "ไม่พบข้อมูล"}
+                            </span>
+                            <span>
+                              <strong>เวลา:</strong>{" "}
+                              {transactionSlipData.transferTime || "ไม่พบข้อมูล"}
+                            </span>
+                            <span>
+                              <strong>จำนวนเงิน:</strong>{" "}
+                              {typeof transactionSlipData.amount === "number"
+                                ? `฿${formatMoney(transactionSlipData.amount)}`
+                                : "ไม่พบข้อมูล"}
+                            </span>
+                          </div>
+                        )}
+                      </div>
 
                       <button
                         type="button"
                         className="btn btn-ghost btn-sm"
-                        onClick={() => removeNewTransactionAttachment(index)}
+                        onClick={removeTransactionSlip}
                         disabled={isUploadingAttachment}
                       >
-                        ลบ
+                        ลบสลิป
                       </button>
                     </div>
-                  ))}
-                </div>
-              )}
+                  )}
 
-              {transactionExistingAttachments.length > 0 && (
-                <div className="transaction-existing-list">
-                  {transactionExistingAttachments.map((attachment) => (
-                    <div
-                      key={attachment.id}
-                      className="transaction-file-row transaction-file-existing"
-                    >
-                      <span className="transaction-file-name">
-                        {attachment.category === "slip"
-                          ? "🧾"
-                          : isImageAttachment(attachment)
-                            ? "🖼️"
-                            : "📄"}{" "}
-                        {attachment.name}
-                      </span>
-
-                      {isImageAttachment(attachment) && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => setPreviewAttachment(attachment)}
+                  {transactionAttachments.length > 0 && (
+                    <div className="transaction-selected-list">
+                      {transactionAttachments.map((file, index) => (
+                        <div
+                          key={`${file.name}-${file.lastModified}-${index}`}
+                          className="transaction-file-row"
                         >
-                          ดูตัวอย่าง
-                        </button>
-                      )}
+                          <span className="transaction-file-name">
+                            📄 {file.name}
+                          </span>
+
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-sm"
+                            onClick={() => removeNewTransactionAttachment(index)}
+                            disabled={isUploadingAttachment}
+                          >
+                            ลบ
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
+
+                  {transactionExistingAttachments.length > 0 && (
+                    <div className="transaction-existing-list">
+                      {transactionExistingAttachments.map((attachment) => (
+                        <div
+                          key={attachment.id}
+                          className="transaction-file-row transaction-file-existing"
+                        >
+                          <span className="transaction-file-name">
+                            {attachment.category === "slip"
+                              ? "🧾"
+                              : isImageAttachment(attachment)
+                                ? "🖼️"
+                                : "📄"}{" "}
+                            {attachment.name}
+                          </span>
+
+                          {isImageAttachment(attachment) && (
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-sm"
+                              onClick={() => setPreviewAttachment(attachment)}
+                            >
+                              ดูตัวอย่าง
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {getAttachmentSlotCount() === 0 && (
+                    <span className="transaction-file-hint">
+                      แนบได้สูงสุด 5 ไฟล์ต่อรายการ • สลิป 1 ไฟล์ + เอกสารหลายไฟล์ • ไฟล์ละไม่เกิน 4 MB
+                    </span>
+                  )}
+
+                  {getAttachmentSlotCount() >= 5 && (
+                    <span className="transaction-file-hint">
+                      ✓ แนบครบ 5 ไฟล์แล้ว
+                    </span>
+                  )}
                 </div>
-              )}
 
-              {getAttachmentSlotCount() === 0 && (
-                <span className="transaction-file-hint">
-                  แนบได้สูงสุด 5 ไฟล์ต่อรายการ • สลิป 1 ไฟล์ + เอกสารหลายไฟล์ • ไฟล์ละไม่เกิน 4 MB
-                </span>
-              )}
+                {isUploadingAttachment && (
+                  <div className="drive-hint">
+                    ⏳ กำลังอัปโหลดไฟล์ {attachmentUploadProgress + 1} /{" "}
+                    {(
+                      transactionAttachments.length +
+                      (transactionSlipFile ? 1 : 0)
+                    )} ไป Google Drive...
+                  </div>
+                )}
 
-              {getAttachmentSlotCount() >= 5 && (
-                <span className="transaction-file-hint">
-                  ✓ แนบครบ 5 ไฟล์แล้ว
-                </span>
-              )}
-            </div>
+                {attachmentError && (
+                  <div className="error-msg show">{attachmentError}</div>
+                )}
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={closeTransactionModal}
+                  >
+                    ยกเลิก
+                  </button>
 
-            {isUploadingAttachment && (
-              <div className="drive-hint">
-                ⏳ กำลังอัปโหลดไฟล์ {attachmentUploadProgress + 1} /{" "}
-                {(
-                  transactionAttachments.length +
-                  (transactionSlipFile ? 1 : 0)
-                )} ไป Google Drive...
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => void saveTransaction()}
+                  >
+                    💾 บันทึก
+                  </button>
+                </div>
               </div>
-            )}
-
-            {attachmentError && (
-              <div className="error-msg show">{attachmentError}</div>
-            )}
-            <div className="form-actions">
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={closeTransactionModal}
-              >
-                ยกเลิก
-              </button>
-
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => void saveTransaction()}
-              >
-                💾 บันทึก
-              </button>
             </div>
-          </div>
-        </div>
-      )}
+          )}
 
-      {isLoginModalOpen && (
-        <div
-          className="modal-overlay open"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              closeLoginModal();
-            }
-          }}
-        >
-          <div className="modal login-modal">
-            <div className="login-icon">🔐</div>
-
+          {isLoginModalOpen && (
             <div
-              className="modal-header"
-              style={{
-                justifyContent: "center",
-                marginBottom: "20px",
+              className="modal-overlay open"
+              onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                  closeLoginModal();
+                }
               }}
             >
-              <div
-                className="modal-title"
-                style={{ fontSize: "1.3rem" }}
-              >
-                Admin Login
-              </div>
-            </div>
+              <div className="modal login-modal">
+                <div className="login-icon">🔐</div>
 
-            <div className="form-group">
-              <label className="form-label">อีเมล</label>
-              <input
-                type="email"
-                className="form-control"
-                placeholder="admin@example.com"
-                value={loginEmail}
-                onChange={(event) => {
-                  setLoginEmail(event.target.value);
-                  setLoginError("");
-                }}
-                autoFocus
-              />
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">รหัสผ่าน</label>
-              <input
-                type="password"
-                className="form-control"
-                placeholder="ใส่รหัสผ่าน..."
-                value={loginPassword}
-                onChange={(event) => {
-                  setLoginPassword(event.target.value);
-                  setLoginError("");
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    void doLogin();
-                  }
-                }}
-              />
-
-              {loginError && (
-                <div className="error-msg show">
-                  {loginError}
+                <div
+                  className="modal-header"
+                  style={{
+                    justifyContent: "center",
+                    marginBottom: "20px",
+                  }}
+                >
+                  <div
+                    className="modal-title"
+                    style={{ fontSize: "1.3rem" }}
+                  >
+                    Admin Login
+                  </div>
                 </div>
-              )}
+
+                <div className="form-group">
+                  <label className="form-label">อีเมล</label>
+                  <input
+                    type="email"
+                    className="form-control"
+                    placeholder="admin@example.com"
+                    value={loginEmail}
+                    onChange={(event) => {
+                      setLoginEmail(event.target.value);
+                      setLoginError("");
+                    }}
+                    autoFocus
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">รหัสผ่าน</label>
+                  <input
+                    type="password"
+                    className="form-control"
+                    placeholder="ใส่รหัสผ่าน..."
+                    value={loginPassword}
+                    onChange={(event) => {
+                      setLoginPassword(event.target.value);
+                      setLoginError("");
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        void doLogin();
+                      }
+                    }}
+                  />
+
+                  {loginError && (
+                    <div className="error-msg show">
+                      {loginError}
+                    </div>
+                  )}
+                </div>
+
+                <div className="form-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={closeLoginModal}
+                  >
+                    ยกเลิก
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => void doLogin()}
+                  >
+                    🔓 เข้าสู่ระบบ
+                  </button>
+                </div>
+              </div>
             </div>
+          )}
 
-            <div className="form-actions">
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={closeLoginModal}
-              >
-                ยกเลิก
-              </button>
-
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => void doLogin()}
-              >
-                🔓 เข้าสู่ระบบ
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isSchedulePreviewOpen && (
-        <div
-          className="slip-viewer-overlay open"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              setIsSchedulePreviewOpen(false);
-            }
-          }}
-        >
-          <div
-            className="slip-viewer-content"
-            style={{
-              maxWidth: "96vw",
-              maxHeight: "96vh",
-              overflow: "auto",
-              padding: "8px",
-              borderRadius: "16px",
-            }}
-          >
-            <button
-              type="button"
-              className="slip-close schedule-preview-close"
-              onClick={() => setIsSchedulePreviewOpen(false)}
-              aria-label="ปิดตัวอย่างตารางงาน"
-            >
-              ✕
-            </button>
-
-            <img
-              src={getScheduleImageUrl(selectedEvent?.scheduleUrl ?? "")}
-              alt="Schedule preview"
-              style={{
-                maxWidth: "92vw",
-                maxHeight: "92vh",
-                width: "auto",
-                height: "auto",
-                cursor: "zoom-out",
+          {isSchedulePreviewOpen && (
+            <div
+              className="slip-viewer-overlay open"
+              onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                  setIsSchedulePreviewOpen(false);
+                }
               }}
-              onClick={() => setIsSchedulePreviewOpen(false)}
-            />
-          </div>
-        </div>
-      )}
-
-      {previewAttachment && isImageAttachment(previewAttachment) && (
-        <div
-          className="slip-viewer-overlay open transaction-image-preview-overlay"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              setPreviewAttachment(null);
-            }
-          }}
-        >
-          <div className="transaction-image-preview">
-            <button
-              type="button"
-              className="slip-close transaction-preview-close"
-              onClick={() => setPreviewAttachment(null)}
-              aria-label="ปิดตัวอย่างรูป"
             >
-              ✕
-            </button>
-
-            <img
-              src={getAttachmentImagePreviewUrl(previewAttachment)}
-              alt={previewAttachment.name}
-            />
-
-            <div className="transaction-preview-caption">
-              {previewAttachment.name}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isLatestEventFolderModalOpen && (
-        <div
-          className="modal-overlay open"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              closeLatestEventFolderModal();
-            }
-          }}
-        >
-          <div className="modal">
-            <div className="modal-header">
-              <div className="modal-title">
-                ⚙️ ตั้งค่าโฟลเดอร์ Event ล่าสุด
-              </div>
-
-              <button
-                type="button"
-                className="modal-close"
-                onClick={closeLatestEventFolderModal}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">
-                🖼️ ลิงก์โฟลเดอร์รูปโปรโมท Event
-              </label>
-
-              <input
-                type="url"
-                className="form-control"
-                placeholder="https://drive.google.com/drive/folders/..."
-                value={latestEventFolderInput}
-                onChange={(event) =>
-                  setLatestEventFolderInput(event.target.value)
-                }
-              />
-
               <div
-                className="drive-hint"
-                style={{ marginTop: "8px" }}
+                className="slip-viewer-content"
+                style={{
+                  maxWidth: "96vw",
+                  maxHeight: "96vh",
+                  overflow: "auto",
+                  padding: "8px",
+                  borderRadius: "16px",
+                }}
               >
-                📌 ระบบจะดึงรูปจากโฟลเดอร์นี้มาแสดง 1 รูป
-                <br />
-                🔓 ตั้งสิทธิ์โฟลเดอร์เป็น “ทุกคนที่มีลิงก์ → ผู้ดู”
-                <br />
-                🔄 เปลี่ยนลิงก์ได้ภายหลังโดยไม่ต้องแก้โค้ด
+                <button
+                  type="button"
+                  className="slip-close schedule-preview-close"
+                  onClick={() => setIsSchedulePreviewOpen(false)}
+                  aria-label="ปิดตัวอย่างตารางงาน"
+                >
+                  ✕
+                </button>
+
+                <img
+                  src={getScheduleImageUrl(selectedEvent?.scheduleUrl ?? "")}
+                  alt="Schedule preview"
+                  style={{
+                    maxWidth: "92vw",
+                    maxHeight: "92vh",
+                    width: "auto",
+                    height: "auto",
+                    cursor: "zoom-out",
+                  }}
+                  onClick={() => setIsSchedulePreviewOpen(false)}
+                />
               </div>
             </div>
+          )}
 
-            <div className="form-actions">
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={closeLatestEventFolderModal}
-              >
-                ยกเลิก
-              </button>
-
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => void saveLatestEventFolder()}
-              >
-                💾 บันทึก
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isQrModalOpen && (
-        <div
-          className="modal-overlay open"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              closeQrModal();
-            }
-          }}
-        >
-          <div className="modal">
-            <div className="modal-header">
-              <div className="modal-title">
-                ⚙️ ตั้งค่า QR Code
-              </div>
-
-              <button
-                type="button"
-                className="modal-close"
-                onClick={closeQrModal}
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">
-                ลิงก์ภาพ QR Code
-              </label>
-
-              <input
-                type="url"
-                className="form-control"
-                placeholder="วางลิงก์ Google Drive หรือ https://..."
-                value={qrInput}
-                onChange={(event) =>
-                  setQrInput(event.target.value)
+          {previewAttachment && isImageAttachment(previewAttachment) && (
+            <div
+              className="slip-viewer-overlay open transaction-image-preview-overlay"
+              onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                  setPreviewAttachment(null);
                 }
-              />
+              }}
+            >
+              <div className="transaction-image-preview">
+                <button
+                  type="button"
+                  className="slip-close transaction-preview-close"
+                  onClick={() => setPreviewAttachment(null)}
+                  aria-label="ปิดตัวอย่างรูป"
+                >
+                  ✕
+                </button>
 
-              <div
-                className="drive-hint"
-                style={{ marginTop: "8px" }}
-              >
-                📎 วางลิงก์แชร์ Google Drive ของรูป QR ได้เลย
-                <br />
-                🔓 ตั้งสิทธิ์ไฟล์เป็น “ทุกคนที่มีลิงก์ → ผู้ดู”
-                <br />
-                ☁️ ระบบจะบันทึกลิงก์ไว้ใน Supabase และแปลงลิงก์ Drive ให้อัตโนมัติ
+                <img
+                  src={getAttachmentImagePreviewUrl(previewAttachment)}
+                  alt={previewAttachment.name}
+                />
+
+                <div className="transaction-preview-caption">
+                  {previewAttachment.name}
+                </div>
               </div>
             </div>
+          )}
 
-            <div className="form-actions">
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={closeQrModal}
-              >
-                ยกเลิก
-              </button>
-
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={saveQr}
-              >
-                💾 บันทึก
-              </button>
+          {toastMessage && (
+            <div id="toast-container">
+              <div className="toast toast-success">
+                ✓ {toastMessage}
+              </div>
             </div>
-          </div>
+          )}
         </div>
-      )}
-
-      {toastMessage && (
-        <div id="toast-container">
-          <div className="toast toast-success">
-            ✓ {toastMessage}
-          </div>
-        </div>
-      )}
+      </div>
     </>
   );
 }
