@@ -1,9 +1,3 @@
-/* =========================================================
-   OomBam Blossom FC
-   Next.js + Supabase
-   Supabase only
-   ========================================================= */
-
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
@@ -1331,11 +1325,10 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       "image/png",
       "image/webp",
       "image/gif",
-      "application/pdf",
     ]);
 
     if (!allowedTypes.has(file.type)) {
-      alert("รองรับสลิปเป็น JPG, PNG, WEBP, GIF หรือ PDF เท่านั้น");
+      alert("รองรับสลิปเป็น JPG, PNG, WEBP หรือ GIF เท่านั้น");
       return;
     }
 
@@ -2431,7 +2424,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
                           >
                             <input
                               type="file"
-                              accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+                              accept="image/jpeg,image/png,image/webp,image/gif"
                               disabled={isUploadingPublicSlip}
                               onChange={(event) => {
                                 const file = event.target.files?.[0] ?? null;
@@ -2453,7 +2446,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
                         </div>
 
                         <div className="donate-upload-hint">
-                          รองรับ JPG, PNG, WEBP, GIF หรือ PDF ขนาดไม่เกิน 4 MB
+                          รองรับ JPG, PNG, WEBP หรือ GIF ขนาดไม่เกิน 4 MB
                         </div>
                       </div>
                     </div>

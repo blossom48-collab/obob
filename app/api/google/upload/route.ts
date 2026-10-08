@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
+import { createClient } from "@supabase/supabase-js";
 import { Readable } from "node:stream";
 
 const MAX_FILE_SIZE = 4 * 2048 * 2048;
@@ -16,6 +17,73 @@ function getOAuthClient() {
     }
 
     return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+}
+
+
+function getSupabaseAdmin() {
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const secretKey = process.env.SUPABASE_SECRET_KEY;
+
+    if (!supabaseUrl || !secretKey) {
+        throw new Error("Supabase server environment variables are not configured.");
+    }
+
+    return createClient(supabaseUrl, secretKey, {
+        auth: {
+            autoRefreshToken: false,
+            persistSession: false,
+        },
+    });
+}
+
+function getClientIp(request: NextRequest) {
+    const forwardedFor = request.headers.get("x-forwarded-for");
+
+    if (forwardedFor) {
+        return forwardedFor.split(",")[0].trim();
+    }
+
+    return (
+        request.headers.get("x-real-ip") ||
+        request.headers.get("cf-connecting-ip") ||
+        "unknown"
+    );
+}
+
+async function reservePublicUploadSlot(ipAddress: string) {
+    const supabase = getSupabaseAdmin();
+
+    const { data, error } = await supabase.rpc(
+        "reserve_public_upload_slot",
+        {
+            p_ip_address: ipAddress,
+        },
+    );
+
+    if (error) {
+        throw new Error(`Rate limit check failed: ${error.message}`);
+    }
+
+    return data === true;
+}
+
+async function releasePublicUploadSlot(ipAddress: string) {
+    try {
+        const supabase = getSupabaseAdmin();
+
+        const { error } = await supabase.rpc(
+            "release_public_upload_slot",
+            {
+                p_ip_address: ipAddress,
+            },
+        );
+
+        if (error) {
+            console.error("Failed to release public upload rate-limit slot:", error);
+        }
+    } catch (error) {
+        console.error("Failed to release public upload rate-limit slot:", error);
+    }
 }
 
 function getBangkokDateStamp() {
@@ -93,12 +161,16 @@ function serializeDriveFile(file: {
 }
 
 export async function POST(request: NextRequest) {
+    let clientIp = "";
+    let publicUploadSlotReserved = false;
+
     try {
         const formData = await request.formData();
         const file = formData.get("file");
         const uploadType = String(formData.get("uploadType") ?? "").trim();
         const isEventPromoUpload = uploadType === EVENT_PROMO_TYPE;
         const isPublicSlipUpload = uploadType === PUBLIC_SLIP_TYPE;
+        clientIp = isPublicSlipUpload ? getClientIp(request) : "";
 
         const cookieRefreshToken = request.cookies.get("google_drive_refresh_token")?.value;
         const publicRefreshToken = isPublicSlipUpload
@@ -164,7 +236,6 @@ export async function POST(request: NextRequest) {
                         "image/png",
                         "image/webp",
                         "image/gif",
-                        "application/pdf",
                     ]
                     : [
                         "image/jpeg",
@@ -187,7 +258,7 @@ export async function POST(request: NextRequest) {
                     error: isEventPromoUpload
                         ? "รูปโปรโมทต้องเป็น JPG, PNG, WEBP หรือ GIF"
                         : isPublicSlipUpload
-                            ? "สลิปรองรับ JPG, PNG, WEBP, GIF หรือ PDF"
+                            ? "สลิปรองรับ JPG, PNG, WEBP หรือ GIF"
                             : "รองรับรูปภาพ และ PDF, Word, Excel, PowerPoint",
                     code: "UNSUPPORTED_FILE_TYPE",
                 },
@@ -195,11 +266,42 @@ export async function POST(request: NextRequest) {
             );
         }
 
+        if (isPublicSlipUpload) {
+            try {
+                publicUploadSlotReserved = await reservePublicUploadSlot(clientIp);
+            } catch (error) {
+                console.error("Public upload rate-limit check failed:", error);
+
+                return NextResponse.json(
+                    {
+                        error: "ไม่สามารถตรวจสอบจำนวนครั้งที่อัปโหลดได้ กรุณาลองใหม่อีกครั้ง",
+                        code: "PUBLIC_UPLOAD_RATE_LIMIT_UNAVAILABLE",
+                    },
+                    { status: 500 },
+                );
+            }
+
+            if (!publicUploadSlotReserved) {
+                return NextResponse.json(
+                    {
+                        error: "IP นี้อัปโหลดสลิปครบ 3 ครั้งสำหรับวันนี้แล้ว กรุณาลองใหม่ในวันถัดไป",
+                        code: "PUBLIC_UPLOAD_RATE_LIMIT_EXCEEDED",
+                    },
+                    { status: 429 },
+                );
+            }
+        }
+
         const folderId = isEventPromoUpload
             ? process.env.GOOGLE_DRIVE_EVENT_PROMO_UPLOAD_FOLDER_ID
             : process.env.GOOGLE_DRIVE_UPLOAD_FOLDER_ID;
 
         if (!folderId) {
+            if (publicUploadSlotReserved) {
+                await releasePublicUploadSlot(clientIp);
+                publicUploadSlotReserved = false;
+            }
+
             return NextResponse.json(
                 {
                     error: isEventPromoUpload
@@ -290,6 +392,8 @@ export async function POST(request: NextRequest) {
             supportsAllDrives: true,
         });
 
+        publicUploadSlotReserved = false;
+
         return NextResponse.json({
             success: true,
             uploadType: isPublicSlipUpload
@@ -301,6 +405,11 @@ export async function POST(request: NextRequest) {
         });
     } catch (error) {
         console.error("Google Drive upload failed:", error);
+
+        // คืนโควตาถ้า reserve ไว้แล้ว แต่ Google Drive อัปโหลดไม่สำเร็จ
+        if (publicUploadSlotReserved && clientIp) {
+            await releasePublicUploadSlot(clientIp);
+        }
 
         const message =
             error instanceof Error
