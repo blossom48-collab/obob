@@ -35,14 +35,42 @@ html {
 
 body {
   font-family: var(--font);
-  background:
-    linear-gradient(rgba(5, 8, 18, 0.58), rgba(5, 8, 18, 0.72)),
-    url("/background.png") center center / cover fixed no-repeat;
-
+  background: #050812;
   color: var(--text-1);
   min-height: 100vh;
   line-height: 1.6;
-  overflow-x: hidden
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Background is tied to the document, not the viewport.
+   The image is centered and kept at roughly the same width as the content. */
+body::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 0;
+  pointer-events: none;
+
+  /* background.png is 1080 × 1440, so keep the background box at 3:4.
+     This makes the document background end exactly at the bottom of the image
+     instead of extending the image area to the full page height. */
+  width: min(1100px, calc(100vw - 48px));
+  aspect-ratio: 3 / 4;
+  transform: translateX(-50%);
+
+  background-image:
+    linear-gradient(180deg,
+      rgba(3, 7, 18, 0.44) 0%,
+      rgba(3, 7, 18, 0.66) 52%,
+      rgba(3, 7, 18, 0.86) 100%),
+    url("/background.png");
+
+  background-position: center top, center top;
+  background-repeat: no-repeat, no-repeat;
+  background-size: 100% 100%, 100% 100%;
+  background-color: transparent;
 }
 
 a {
@@ -68,7 +96,8 @@ textarea {
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  overflow: hidden opacity: 0.18;
+  overflow: hidden;
+  opacity: 0.18;
 }
 
 .orb {
@@ -208,7 +237,6 @@ textarea {
 }
 
 .stat-card,
-.table-wrap,
 .tx-card,
 .donate-card,
 .event-media-col {
@@ -228,7 +256,6 @@ textarea {
   }
 
   .stat-card,
-  .table-wrap,
   .tx-card,
   .donate-card,
   .event-media-col {
@@ -239,7 +266,7 @@ textarea {
 
 #app {
   position: relative;
-  z-index: 1
+  z-index: 1;
 }
 
 .view {
@@ -497,14 +524,13 @@ textarea {
 }
 
 .table-wrap {
-  background: rgba(18, 24, 42, 0.44);
-  backdrop-filter: blur(18px) saturate(135%);
-  -webkit-backdrop-filter: blur(18px) saturate(135%);
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  box-shadow:
-    0 18px 45px rgba(0, 0, 0, 0.20),
-    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border: none;
+  box-shadow: none;
   border-radius: var(--radius-lg);
+  overflow: hidden;
 
   width: 100%;
   max-width: 100%;
@@ -517,6 +543,7 @@ table {
   width: 100%;
   min-width: 720px;
   border-collapse: collapse;
+  background: rgba(10, 18, 36, 0.58);
 }
 
 thead th {
@@ -527,12 +554,13 @@ thead th {
   letter-spacing: .8px;
   text-transform: uppercase;
   color: var(--text-3);
-  background: rgba(255, 255, 255, .03);
+  background: rgba(255, 255, 255, .025);
   border-bottom: 1px solid var(--border)
 }
 
 tbody tr {
   border-bottom: 1px solid rgba(255, 255, 255, .04);
+  background: rgba(255, 255, 255, .018);
   transition: background .2s;
   cursor: pointer
 }
@@ -1078,7 +1106,7 @@ select.form-control option {
 }
 
 .tx-card {
-  background: rgba(18, 24, 42, 0.44);
+  background: rgba(10, 18, 36, 0.34);
   backdrop-filter: blur(18px) saturate(135%);
   -webkit-backdrop-filter: blur(18px) saturate(135%);
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -1463,7 +1491,7 @@ hr {
 }
 
 .donate-card {
-  background: rgba(18, 24, 42, 0.44);
+  background: rgba(10, 18, 36, 0.34);
   backdrop-filter: blur(22px) saturate(140%);
   -webkit-backdrop-filter: blur(22px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -2042,6 +2070,20 @@ hr {
 }
 
 @media (max-width: 768px) {
+
+  /* Mobile: keep the background fixed while the content scrolls. */
+  body::before {
+    position: fixed;
+    inset: 0;
+    width: auto;
+    min-height: 100vh;
+    height: 100vh;
+    aspect-ratio: auto;
+    transform: none;
+    background-position: center center, center center;
+    background-size: 100% 100%, auto 86vh;
+  }
+
   .event-media-grid {
     grid-template-columns: 1fr;
     gap: 12px;

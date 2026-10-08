@@ -16,6 +16,7 @@ type EventItem = {
   desc: string;
   imageFolderUrl: string;
   scheduleUrl: string;
+  eventDate: string | null;
   createdAt: string;
 };
 
@@ -60,6 +61,7 @@ type EventRow = {
   description: string | null;
   image_folder_url: string | null;
   schedule_url: string | null;
+  event_date: string | null;
   created_at: string;
 };
 
@@ -200,6 +202,7 @@ function mapEvent(row: EventRow): EventItem {
     desc: row.description ?? "",
     imageFolderUrl: row.image_folder_url ?? "",
     scheduleUrl: row.schedule_url ?? "",
+    eventDate: row.event_date ?? null,
     createdAt: row.created_at,
   };
 }
@@ -314,6 +317,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [eventName, setEventName] = useState("");
+  const [eventDate, setEventDate] = useState("");
   const [eventDesc, setEventDesc] = useState("");
   const [imageFolderUrl, setImageFolderUrl] = useState("");
   const [scheduleUrl, setScheduleUrl] = useState("");
@@ -487,9 +491,9 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       supabase
         .from("events")
         .select(
-          "id, name, description, image_folder_url, schedule_url, created_at",
+          "id, name, event_date, description, image_folder_url, schedule_url, created_at",
         )
-        .order("created_at", { ascending: false }),
+        .order("event_date", { ascending: false, nullsFirst: false }),
       supabase
         .from("transactions")
         .select(
@@ -619,6 +623,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
   function resetEventForm() {
     setEditingEventId(null);
     setEventName("");
+    setEventDate("");
     setEventDesc("");
     setImageFolderUrl("");
     setScheduleUrl("");
@@ -642,6 +647,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
 
     setEditingEventId(event.id);
     setEventName(event.name);
+    setEventDate(event.eventDate ?? "");
     setEventDesc(event.desc);
     setImageFolderUrl(event.imageFolderUrl);
     setScheduleUrl(event.scheduleUrl);
@@ -666,11 +672,17 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       return;
     }
 
+    if (!eventDate) {
+      alert("กรุณาเลือกวันที่ Event");
+      return;
+    }
+
     if (editingEventId) {
       const { data, error } = await supabase
         .from("events")
         .update({
           name: cleanName,
+          event_date: eventDate,
           description: eventDesc.trim() || null,
           image_folder_url: imageFolderUrl.trim() || null,
           schedule_url: scheduleUrl.trim() || null,
@@ -678,7 +690,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
         })
         .eq("id", editingEventId)
         .select(
-          "id, name, description, image_folder_url, schedule_url, created_at",
+          "id, name, event_date, description, image_folder_url, schedule_url, created_at",
         )
         .single();
 
@@ -700,12 +712,13 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
         .from("events")
         .insert({
           name: cleanName,
+          event_date: eventDate,
           description: eventDesc.trim() || null,
           image_folder_url: imageFolderUrl.trim() || null,
           schedule_url: scheduleUrl.trim() || null,
         })
         .select(
-          "id, name, description, image_folder_url, schedule_url, created_at",
+          "id, name, event_date, description, image_folder_url, schedule_url, created_at",
         )
         .single();
 
@@ -1368,38 +1381,6 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
   return (
     <>
       <style jsx global>{`
-        html,
-        body {
-          min-height: 100%;
-          background: transparent !important;
-        }
-
-        body {
-          position: relative;
-          color: var(--text, #f8fafc);
-        }
-
-        body::before {
-          content: "";
-          position: fixed;
-          inset: 0;
-          z-index: -20;
-          pointer-events: none;
-          background:
-            linear-gradient(180deg, rgba(3, 7, 18, 0.48) 0%, rgba(3, 7, 18, 0.76) 100%),
-            url("/background.png") center center / cover no-repeat;
-          transform: translateZ(0);
-        }
-
-        body::after {
-          content: "";
-          position: fixed;
-          inset: 0;
-          z-index: -19;
-          pointer-events: none;
-          background: radial-gradient(circle at 50% 0%, rgba(96, 165, 250, 0.10), transparent 42%);
-        }
-
         .bg-orbs {
           display: none !important;
         }
@@ -1411,11 +1392,8 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
           -webkit-backdrop-filter: blur(18px) saturate(140%);
         }
 
-        .section,
-        .detail-hero,
         .donate-card,
         .event-media-col,
-        .table-wrap,
         .tx-card,
         .stat-card {
           background: rgba(10, 18, 36, 0.58) !important;
@@ -1423,6 +1401,19 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
           box-shadow: 0 18px 55px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.05);
           backdrop-filter: blur(18px) saturate(135%);
           -webkit-backdrop-filter: blur(18px) saturate(135%);
+        }
+
+        .detail-hero {
+          background: transparent !important;
+          border: none !important;
+          box-shadow: none !important;
+          backdrop-filter: none !important;
+          -webkit-backdrop-filter: none !important;
+        }
+
+        /* Donation card: lighter glass than the other cards */
+        .donate-card {
+          background: rgba(10, 18, 36, 0.24) !important;
         }
 
         .stat-card:hover,
@@ -1433,14 +1424,27 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
 
         .table-wrap {
           overflow: hidden;
+          background: transparent !important;
+          border: none !important;
+          box-shadow: none !important;
+          border-radius: 20px !important;
         }
 
         .table-wrap table {
-          background: transparent !important;
+          background: rgba(10, 18, 36, 0.58) !important;
+          border-radius: 20px;
         }
 
         .table-wrap th {
           background: rgba(255, 255, 255, 0.055) !important;
+        }
+
+        .table-wrap tbody tr {
+          background: rgba(255, 255, 255, 0.018) !important;
+        }
+
+        .table-wrap tbody tr:hover {
+          background: rgba(255, 255, 255, 0.07) !important;
         }
 
         .form-control,
@@ -1467,24 +1471,26 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
           backdrop-filter: blur(24px) saturate(140%);
           -webkit-backdrop-filter: blur(24px) saturate(140%);
         }
-
         @media (max-width: 700px) {
-          body::before {
-            background:
-              linear-gradient(180deg, rgba(3, 7, 18, 0.54) 0%, rgba(3, 7, 18, 0.82) 100%),
-              url("/background.png") center center / cover no-repeat;
-          }
-
-          .section,
-          .detail-hero,
           .donate-card,
           .event-media-col,
-          .table-wrap,
           .tx-card,
           .stat-card {
             background: rgba(10, 18, 36, 0.66) !important;
             backdrop-filter: blur(14px) saturate(130%);
             -webkit-backdrop-filter: blur(14px) saturate(130%);
+          }
+
+          .detail-hero {
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+          }
+
+          .donate-card {
+            background: rgba(10, 18, 36, 0.42) !important;
           }
         }
       `}</style>
@@ -2050,6 +2056,19 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
                             <td className="td-event-name">
                               {event.name}
 
+                              {event.eventDate && (
+                                <div
+                                  style={{
+                                    fontSize: ".72rem",
+                                    color: "var(--text-3)",
+                                    fontWeight: 400,
+                                    marginTop: "3px",
+                                  }}
+                                >
+                                  📅 {formatDate(event.eventDate)}
+                                </div>
+                              )}
+
                               {event.desc && (
                                 <div
                                   style={{
@@ -2270,6 +2289,20 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
                 onChange={(event) => setEventName(event.target.value)}
                 autoFocus
               />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">วันที่ Event *</label>
+              <input
+                type="date"
+                className="form-control"
+                value={eventDate}
+                onChange={(event) => setEventDate(event.target.value)}
+                required
+              />
+              <div className="drive-hint">
+                📅 วันที่จัด Event จริง
+              </div>
             </div>
 
             <div className="form-group">

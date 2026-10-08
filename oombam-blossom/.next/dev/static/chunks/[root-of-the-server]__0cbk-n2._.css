@@ -171,11 +171,29 @@ html {
 
 body {
   font-family: var(--font);
-  background: var(--bg-dark);
   color: var(--text-1);
+  background: #050812;
   min-height: 100vh;
   line-height: 1.6;
+  position: relative;
   overflow-x: hidden;
+}
+
+body:before {
+  content: "";
+  z-index: 0;
+  pointer-events: none;
+  aspect-ratio: 3 / 4;
+  background-color: #0000;
+  background-image: linear-gradient(#03071270 0%, #030712a8 52%, #030712db 100%), url("/background.png");
+  background-position: top, top;
+  background-repeat: no-repeat, no-repeat;
+  background-size: 100% 100%, 100% 100%;
+  width: min(1100px, 100vw - 48px);
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 a {
@@ -197,6 +215,7 @@ input, select, textarea {
 .bg-orbs {
   z-index: 0;
   pointer-events: none;
+  opacity: .18;
   position: fixed;
   inset: 0;
   overflow: hidden;
@@ -252,8 +271,8 @@ input, select, textarea {
   z-index: 100;
   -webkit-backdrop-filter: blur(20px);
   backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--border);
-  background: #0a0e1ad9;
+  background: #080c189e;
+  border-bottom: 1px solid #ffffff24;
   justify-content: space-between;
   align-items: center;
   height: 64px;
@@ -261,6 +280,7 @@ input, select, textarea {
   display: flex;
   position: sticky;
   top: 0;
+  box-shadow: 0 8px 30px #0000002e;
 }
 
 .nav-brand {
@@ -317,6 +337,38 @@ input, select, textarea {
   padding: 4px 12px;
   font-size: .78rem;
   font-weight: 600;
+}
+
+#app:before {
+  content: "";
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(circle at 20% 10%, #60a5fa1a, #0000 32%), radial-gradient(circle at 85% 80%, #a78bfa14, #0000 30%), linear-gradient(#04070f14, #04070f29);
+  position: fixed;
+  inset: 0;
+}
+
+.section, .detail-hero, .donate-section {
+  position: relative;
+}
+
+.stat-card, .tx-card, .donate-card, .event-media-col {
+  box-shadow: 0 18px 50px #00000038, inset 0 1px #ffffff0f;
+}
+
+@media (max-width: 640px) {
+  body {
+    background-position: top;
+    background-attachment: scroll;
+  }
+
+  .navbar {
+    background: #080c18c2;
+  }
+
+  .stat-card, .tx-card, .donate-card, .event-media-col {
+    -webkit-backdrop-filter: blur(14px) saturate(125%);
+  }
 }
 
 #app {
@@ -380,11 +432,10 @@ input, select, textarea {
 
 .stat-card {
   box-sizing: border-box;
-  background: var(--bg-card);
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
-  border: 1px solid var(--border);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
   border-radius: var(--radius-lg);
+  background: #12182a75;
+  border: 1px solid #ffffff21;
   flex-direction: column;
   justify-content: flex-start;
   min-width: 0;
@@ -395,6 +446,7 @@ input, select, textarea {
   display: flex;
   position: relative;
   overflow: hidden;
+  box-shadow: 0 18px 45px #0003, inset 0 1px #ffffff12;
 }
 
 .stat-card:before {
@@ -576,12 +628,12 @@ input, select, textarea {
 }
 
 .table-wrap {
-  background: var(--bg-card);
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
-  border: 1px solid var(--border);
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
   border-radius: var(--radius-lg);
   -webkit-overflow-scrolling: touch;
+  background: none;
+  border: none;
   width: 100%;
   max-width: 100%;
   overflow: auto hidden;
@@ -589,6 +641,7 @@ input, select, textarea {
 
 table {
   border-collapse: collapse;
+  background: #0a122494;
   width: 100%;
   min-width: 720px;
 }
@@ -599,7 +652,7 @@ thead th {
   text-transform: uppercase;
   color: var(--text-3);
   border-bottom: 1px solid var(--border);
-  background: #ffffff08;
+  background: #ffffff06;
   padding: 16px 20px;
   font-size: .78rem;
   font-weight: 600;
@@ -607,6 +660,7 @@ thead th {
 
 tbody tr {
   cursor: pointer;
+  background: #ffffff05;
   border-bottom: 1px solid #ffffff0a;
   transition: background .2s;
 }
@@ -1146,15 +1200,15 @@ select.form-control option {
 }
 
 .tx-card {
-  background: var(--bg-card);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
-  border: 1px solid var(--border);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
   border-radius: var(--radius);
+  background: #0a122457;
+  border: 1px solid #ffffff1f;
   padding: 20px 24px;
   transition: all .2s;
   position: relative;
   overflow: hidden;
+  box-shadow: 0 14px 34px #0000002e, inset 0 1px #ffffff0d;
 }
 
 .tx-card:before {
@@ -1527,17 +1581,17 @@ hr {
 }
 
 .donate-card {
-  background: var(--bg-card);
-  -webkit-backdrop-filter: blur(20px);
-  backdrop-filter: blur(20px);
-  border: 1px solid var(--border);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
   border-radius: var(--radius-xl);
+  background: #0a122457;
+  border: 1px solid #ffffff24;
   align-items: center;
   gap: 48px;
   padding: 48px 40px;
   display: flex;
   position: relative;
   overflow: hidden;
+  box-shadow: 0 24px 60px #00000038, inset 0 1px #ffffff12;
 }
 
 .donate-card:before {
@@ -1755,7 +1809,8 @@ hr {
 }
 
 .event-media-col {
-  background: linear-gradient(#ffffff09, #ffffff04);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+  background: linear-gradient(#ffffff13, #ffffff06);
   border: 1px solid #ffffff12;
   border-radius: 20px;
   flex-direction: column;
@@ -2092,6 +2147,18 @@ hr {
 }
 
 @media (max-width: 768px) {
+  body:before {
+    aspect-ratio: auto;
+    background-position: center, center;
+    background-size: 100% 100%, auto 86vh;
+    width: auto;
+    height: 100vh;
+    min-height: 100vh;
+    position: fixed;
+    inset: 0;
+    transform: none;
+  }
+
   .event-media-grid {
     grid-template-columns: 1fr;
     gap: 12px;
