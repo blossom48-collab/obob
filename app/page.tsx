@@ -121,6 +121,68 @@ function formatDate(date: string) {
   });
 }
 
+
+function cleanPartyName(value: string) {
+  let text = value.trim().replace(/\s+/g, " ");
+  if (!text) return "";
+
+  // OCR บางธนาคารจะต่อชื่อธนาคารเข้ามาในช่องชื่อผู้โอน/ผู้รับ
+  // เช่น "น.ส. วรพร จินดากาญจน์ ธนาคารออมสิน"
+  const bankSuffixPattern =
+    /\s+(?:ธนาคาร)?(?:กรุงเทพ|กสิกรไทย|ไทยพาณิชย์|กรุงไทย|กรุงศรีอยุธยา|กรุงศรี|ออมสิน|เกียรตินาคินภัทร|เกียรตินาคิน|ทหารไทยธนชาต|ทีเอ็มบีธนชาต|ทีเอ็มบี|ยูโอบี|อาคารสงเคราะห์|เพื่อการเกษตรและสหกรณ์การเกษตร|อิสลามแห่งประเทศไทย|พัฒนาวิสาหกิจขนาดกลางและขนาดย่อม|bbl|kbank|scb|ktb|bay|kkp|gsb|ttb|tmb)\s*$/i;
+
+  text = text.replace(bankSuffixPattern, "").trim();
+  return text;
+}
+
+function normalizeBankKey(value: string) {
+  const text = value.trim().toLowerCase();
+  if (!text) return "";
+
+  if (
+    text.includes("bbl") ||
+    text.includes("ธนาคารกรุงเทพ") ||
+    text.includes("กรุงเทพ")
+  ) {
+    return "bbl";
+  }
+
+  if (
+    text.includes("kkp") ||
+    text.includes("เกียรตินาคินภัทร") ||
+    text.includes("เกียรตินาคิน")
+  ) {
+    return "kkp";
+  }
+
+  if (
+    text.includes("kbank") ||
+    text.includes("k-b") ||
+    text.includes("กสิกรไทย") ||
+    text.includes("กสิกร")
+  ) {
+    return "kbank";
+  }
+
+  if (text.includes("scb") || text.includes("ไทยพาณิชย์")) {
+    return "scb";
+  }
+
+  if (text.includes("ktb") || text.includes("กรุงไทย")) {
+    return "ktb";
+  }
+
+  if (text.includes("bai") || text.includes("krungsri") || text.includes("กรุงศรี")) {
+    return "bay";
+  }
+
+  if (text.includes("ttb") || text.includes("ทหารไทยธนชาต") || text.includes("ธนชาต")) {
+    return "ttb";
+  }
+
+  return text.replace(/[^a-z0-9]/g, "");
+}
+
 function getTransactionFileExtension(file: File) {
   const match = file.name.trim().match(/\.[a-zA-Z0-9]{1,8}$/);
   if (match?.[0]) return match[0].toLowerCase();
@@ -994,6 +1056,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("accountName", bankAccountName.trim());
+      formData.append("accountBankName", bankName.trim());
 
       const accountDigits = bankAccountNumber.replace(/\D/g, "");
       formData.append(
@@ -1013,36 +1076,35 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       }
 
       const parsed = data?.slip as SlipData | null;
+      const cleanedParsed = parsed
+        ? {
+          ...parsed,
+          payerName: cleanPartyName(parsed.payerName ?? ""),
+          payeeName: cleanPartyName(parsed.payeeName ?? ""),
+        }
+        : null;
 
       setTransactionSlipFile(file);
-      setTransactionSlipData(parsed);
 
-      if (
-        parsed?.transactionType === "income" ||
-        parsed?.transactionType === "expense"
-      ) {
-        setTransactionType(parsed.transactionType);
+      if (cleanedParsed?.transferDate) {
+        setTransactionDate(cleanedParsed.transferDate);
       }
 
-      if (parsed?.transferDate) {
-        setTransactionDate(parsed.transferDate);
+      if (cleanedParsed?.transferTime) {
+        setTransactionTime(cleanedParsed.transferTime);
       }
 
-      if (parsed?.transferTime) {
-        setTransactionTime(parsed.transferTime);
+      if (typeof cleanedParsed?.amount === "number" && Number.isFinite(cleanedParsed.amount)) {
+        setTransactionAmount(String(cleanedParsed.amount));
       }
 
-      if (typeof parsed?.amount === "number" && Number.isFinite(parsed.amount)) {
-        setTransactionAmount(String(parsed.amount));
-      }
-
-      const payer = parsed?.payerName?.trim() || "";
-      const payee = parsed?.payeeName?.trim() || "";
+      const payer = cleanedParsed?.payerName?.trim() || "";
+      const payee = cleanedParsed?.payeeName?.trim() || "";
 
       const ownName = bankAccountName.trim().toLowerCase();
       const ownAccount = bankAccountNumber.replace(/\D/g, "");
-      const payerAccount = (parsed?.payerAccount ?? "").replace(/\D/g, "");
-      const payeeAccount = (parsed?.payeeAccount ?? "").replace(/\D/g, "");
+      const payerAccount = (cleanedParsed?.payerAccount ?? "").replace(/\D/g, "");
+      const payeeAccount = (cleanedParsed?.payeeAccount ?? "").replace(/\D/g, "");
       const payerMatchesOwn =
         (!!ownName && payer.toLowerCase().includes(ownName)) ||
         (!!ownAccount && payerAccount.endsWith(ownAccount));
@@ -1051,25 +1113,58 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
         (!!ownAccount && payeeAccount.endsWith(ownAccount));
 
       let detectedType: "income" | "expense" =
-        parsed?.transactionType === "income" || parsed?.transactionType === "expense"
-          ? parsed.transactionType
+        cleanedParsed?.transactionType === "income" ||
+          cleanedParsed?.transactionType === "expense"
+          ? cleanedParsed.transactionType
           : transactionType;
 
+      // ใช้โครงสร้างบัญชีของเราเป็นหลัก และใช้ OCR เป็น fallback
       if (payeeMatchesOwn && !payerMatchesOwn) {
         detectedType = "income";
       } else if (payerMatchesOwn && !payeeMatchesOwn) {
         detectedType = "expense";
       }
 
+      const slipBankKey = normalizeBankKey(cleanedParsed?.bankName ?? "");
+      const ownBankKey = normalizeBankKey(bankName);
+
+      // กรณี OCR สลับทิศทาง เช่น BBL -> บัญชี KKP ของเรา
+      const isCrossBankIncoming =
+        !payee &&
+        payerMatchesOwn &&
+        !!slipBankKey &&
+        !!ownBankKey &&
+        slipBankKey !== ownBankKey;
+
+      if (isCrossBankIncoming) {
+        detectedType = "income";
+      } else if (
+        !payeeMatchesOwn &&
+        !payerMatchesOwn &&
+        (cleanedParsed?.transactionType === "income" ||
+          cleanedParsed?.transactionType === "expense")
+      ) {
+        detectedType = cleanedParsed.transactionType;
+      }
+
+      const finalSlipData = cleanedParsed
+        ? {
+          ...cleanedParsed,
+          transactionType: detectedType,
+        }
+        : null;
+
+      setTransactionSlipData(finalSlipData);
       setTransactionType(detectedType);
 
       if (detectedType === "expense") {
-        const target = payee;
-        if (target) {
-          setTransactionDesc(`โอนไปยัง → ${target}`);
+        if (payee) {
+          setTransactionDesc(`โอนไปยัง → ${payee}`);
         }
       } else if (detectedType === "income") {
-        const source = payer || parsed?.bankName?.trim() || "";
+        const source = isCrossBankIncoming
+          ? (cleanedParsed?.bankName?.trim() || payer)
+          : (payer || cleanedParsed?.bankName?.trim() || "");
         if (source) {
           setTransactionDesc(`รับเงินจาก → ${source}`);
         }
@@ -1533,21 +1628,12 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
     setLatestEventImageError("");
 
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-
-      if (!session?.access_token) {
-        throw new Error("กรุณาเข้าสู่ระบบ Admin ก่อนอัปโหลดรูป");
-      }
-
       const formData = new FormData();
       formData.append("file", file);
       formData.append("uploadType", "event-promo");
 
       const response = await fetch("/api/google/upload", {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
         body: formData,
       });
 
