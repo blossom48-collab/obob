@@ -1367,6 +1367,128 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
 
   return (
     <>
+      <style jsx global>{`
+        html,
+        body {
+          min-height: 100%;
+          background: transparent !important;
+        }
+
+        body {
+          position: relative;
+          color: var(--text, #f8fafc);
+        }
+
+        body::before {
+          content: "";
+          position: fixed;
+          inset: 0;
+          z-index: -20;
+          pointer-events: none;
+          background:
+            linear-gradient(180deg, rgba(3, 7, 18, 0.48) 0%, rgba(3, 7, 18, 0.76) 100%),
+            url("/background.png") center center / cover no-repeat;
+          transform: translateZ(0);
+        }
+
+        body::after {
+          content: "";
+          position: fixed;
+          inset: 0;
+          z-index: -19;
+          pointer-events: none;
+          background: radial-gradient(circle at 50% 0%, rgba(96, 165, 250, 0.10), transparent 42%);
+        }
+
+        .bg-orbs {
+          display: none !important;
+        }
+
+        .navbar {
+          background: rgba(5, 10, 24, 0.58) !important;
+          border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
+          backdrop-filter: blur(18px) saturate(140%);
+          -webkit-backdrop-filter: blur(18px) saturate(140%);
+        }
+
+        .section,
+        .detail-hero,
+        .donate-card,
+        .event-media-col,
+        .table-wrap,
+        .tx-card,
+        .stat-card {
+          background: rgba(10, 18, 36, 0.58) !important;
+          border: 1px solid rgba(255, 255, 255, 0.12) !important;
+          box-shadow: 0 18px 55px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+          backdrop-filter: blur(18px) saturate(135%);
+          -webkit-backdrop-filter: blur(18px) saturate(135%);
+        }
+
+        .stat-card:hover,
+        .tx-card:hover {
+          background: rgba(15, 25, 48, 0.68) !important;
+          border-color: rgba(255, 255, 255, 0.18) !important;
+        }
+
+        .table-wrap {
+          overflow: hidden;
+        }
+
+        .table-wrap table {
+          background: transparent !important;
+        }
+
+        .table-wrap th {
+          background: rgba(255, 255, 255, 0.055) !important;
+        }
+
+        .form-control,
+        select.form-control,
+        input.form-control,
+        textarea.form-control {
+          background: rgba(5, 10, 24, 0.52) !important;
+          border-color: rgba(255, 255, 255, 0.14) !important;
+          backdrop-filter: blur(10px);
+          -webkit-backdrop-filter: blur(10px);
+        }
+
+        .chip {
+          background: rgba(255, 255, 255, 0.07) !important;
+          border-color: rgba(255, 255, 255, 0.10) !important;
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+        }
+
+        .modal {
+          background: rgba(8, 15, 30, 0.82) !important;
+          border: 1px solid rgba(255, 255, 255, 0.14) !important;
+          box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
+          backdrop-filter: blur(24px) saturate(140%);
+          -webkit-backdrop-filter: blur(24px) saturate(140%);
+        }
+
+        @media (max-width: 700px) {
+          body::before {
+            background:
+              linear-gradient(180deg, rgba(3, 7, 18, 0.54) 0%, rgba(3, 7, 18, 0.82) 100%),
+              url("/background.png") center center / cover no-repeat;
+          }
+
+          .section,
+          .detail-hero,
+          .donate-card,
+          .event-media-col,
+          .table-wrap,
+          .tx-card,
+          .stat-card {
+            background: rgba(10, 18, 36, 0.66) !important;
+            backdrop-filter: blur(14px) saturate(130%);
+            -webkit-backdrop-filter: blur(14px) saturate(130%);
+          }
+        }
+      `}</style>
+
       <div className="bg-orbs">
         <div className="orb orb-1" />
         <div className="orb orb-2" />
