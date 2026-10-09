@@ -1628,27 +1628,69 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
     setLatestEventImageError("");
 
     try {
+      // ตรวจสอบ session ของ Admin ก่อนเรียก API
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError) {
+        throw new Error(
+          `ตรวจสอบสถานะ Admin ไม่สำเร็จ: ${sessionError.message}`,
+        );
+      }
+
+      if (!session?.access_token) {
+        throw new Error(
+          "ไม่พบ session ของ Admin กรุณาเข้าสู่ระบบใหม่อีกครั้ง",
+        );
+      }
+
+      // เตรียมรูปและระบุว่าเป็นรูปโปรโมต Event
       const formData = new FormData();
       formData.append("file", file);
       formData.append("uploadType", "event-promo");
 
+      // ส่ง access token ให้ API ยืนยันตัวตน Admin
       const response = await fetch("/api/google/upload", {
         method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
         body: formData,
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
 
       if (!response.ok) {
-        if (response.status === 401) {
-          throw new Error("ยังไม่ได้เชื่อมต่อ Google Drive กรุณาเชื่อม Google Drive ก่อนอัปโหลดรูป");
+        if (data?.code === "AUTH_REQUIRED") {
+          throw new Error(
+            "ยืนยันตัวตน Admin ไม่สำเร็จ กรุณาเข้าสู่ระบบใหม่อีกครั้ง",
+          );
         }
-        throw new Error(data?.error || "อัปโหลดรูป Event ล่าสุดไม่สำเร็จ");
+
+        if (data?.code === "GOOGLE_NOT_CONNECTED") {
+          throw new Error(
+            "เซิร์ฟเวอร์ยังไม่ได้ตั้งค่า GOOGLE_DRIVE_REFRESH_TOKEN",
+          );
+        }
+
+        if (data?.code === "EVENT_PROMO_UPLOAD_FOLDER_NOT_CONFIGURED") {
+          throw new Error(
+            "ยังไม่ได้กำหนด GOOGLE_DRIVE_EVENT_PROMO_UPLOAD_FOLDER_ID",
+          );
+        }
+
+        throw new Error(
+          data?.error || `อัปโหลดรูปไม่สำเร็จ (HTTP ${response.status})`,
+        );
       }
 
       const uploaded = data?.file;
       if (!uploaded?.id) {
-        throw new Error("อัปโหลดสำเร็จแต่ไม่พบข้อมูลไฟล์ที่สร้างขึ้น");
+        throw new Error(
+          "API ตอบกลับสำเร็จ แต่ไม่พบรหัสไฟล์ Google Drive",
+        );
       }
 
       const image: DriveImage = {
@@ -1662,6 +1704,7 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
         createdTime: uploaded.createdTime ?? undefined,
       };
 
+      // บันทึกข้อมูลรูปใน settings ของ Supabase
       await saveLatestEventPromoSetting(image);
 
       setLatestEventImage(image);
@@ -1671,10 +1714,12 @@ export default function Home({ initialEventId }: { initialEventId?: string } = {
       showToast("อัปโหลดรูป Event ล่าสุดเรียบร้อยแล้ว");
     } catch (error) {
       console.error("อัปโหลดรูป Event ล่าสุดไม่สำเร็จ:", error);
+
       const message =
         error instanceof Error
           ? error.message
           : "อัปโหลดรูป Event ล่าสุดไม่สำเร็จ";
+
       setLatestEventImageError(message);
       alert(message);
     } finally {
